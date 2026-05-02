@@ -11,4 +11,9 @@ ConfigModel {
         icon: "view-calendar-tasks"
         source: "ConfigGoogle.qml"
     }
+    ConfigCategory {
+        name: "WebDAV"
+        icon: "network-server"
+        source: "ConfigWebDav.qml"
+    }
 }

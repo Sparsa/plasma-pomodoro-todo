@@ -12,6 +12,8 @@ Item {
     property bool taskDone: false
     property bool taskExpanded: false
     property string taskReminder: ""   // ISO datetime string, "" = none
+    property bool taskUrgent:    false
+    property bool taskImportant: false
 
     property bool editing: false
     property bool editingDesc: false
@@ -24,6 +26,15 @@ Item {
     signal removeRequested()
     signal editingStarted()
     signal editingEnded()
+    signal urgentToggled()
+    signal importantToggled()
+
+    readonly property color quadrantColor: {
+        if (taskUrgent && taskImportant) return "#e74c3c"
+        if (taskImportant)               return "#3498db"
+        if (taskUrgent)                  return "#f39c12"
+        return "transparent"
+    }
 
     implicitHeight: col.implicitHeight
     // Delegate width is controlled by the ListView; keeping an intrinsic width
@@ -324,6 +335,13 @@ Item {
                 onToggled: root.toggleDone()
             }
 
+            Rectangle {
+                width: 7; height: 7; radius: 4
+                visible: root.taskUrgent || root.taskImportant
+                color: root.quadrantColor
+                Layout.alignment: Qt.AlignVCenter
+            }
+
             PlasmaComponents3.Label {
                 id: titleLabel
                 Layout.fillWidth: true
@@ -509,6 +527,39 @@ Item {
                         }
                     }
                 }
+            }
+
+            // ── Priority row ───────────────────────────────────────────────
+            RowLayout {
+                Layout.fillWidth: true
+                visible: !root.editingDesc
+                spacing: Kirigami.Units.smallSpacing
+
+                PlasmaComponents3.Button {
+                    checkable: true
+                    checked: root.taskUrgent
+                    text: i18n("Urgent")
+                    icon.name: "flag-red"
+                    flat: !root.taskUrgent
+                    onToggled: root.urgentToggled()
+                    implicitHeight: Kirigami.Units.gridUnit * 1.6
+                    QQC2.ToolTip.text: i18n("Mark as urgent")
+                    QQC2.ToolTip.visible: hovered
+                }
+
+                PlasmaComponents3.Button {
+                    checkable: true
+                    checked: root.taskImportant
+                    text: i18n("Important")
+                    icon.name: "starred"
+                    flat: !root.taskImportant
+                    onToggled: root.importantToggled()
+                    implicitHeight: Kirigami.Units.gridUnit * 1.6
+                    QQC2.ToolTip.text: i18n("Mark as important")
+                    QQC2.ToolTip.visible: hovered
+                }
+
+                Item { Layout.fillWidth: true }
             }
 
             // ── Reminder row ───────────────────────────────────────────────

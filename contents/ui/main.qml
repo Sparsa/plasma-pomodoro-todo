@@ -16,6 +16,21 @@ PlasmoidItem {
     property string timerMode: "work"
     property int doneCount: 0
     property bool isPaused: false   // true only after an explicit Pause; false after Start/Reset
+    property string timerEndTime:      ""
+    property string timerLastModified: ""
+    property string taskViewMode:      "list"  // "list" | "matrix"
+
+    // Tasks grouped by Eisenhower quadrant — recomputed on workspace change.
+    readonly property var quadrantTasks: {
+        var ws = root.workspacesData[root.currentWorkspace]
+        var tasks = (ws && ws.tasks) ? ws.tasks : []
+        return [
+            tasks.filter(function(t) { return  t.urgent &&  t.important }),
+            tasks.filter(function(t) { return !t.urgent &&  t.important }),
+            tasks.filter(function(t) { return  t.urgent && !t.important }),
+            tasks.filter(function(t) { return !t.urgent && !t.important })
+        ]
+    }
 
     // Resolved at runtime so the path is always correct regardless of install location
     readonly property string logoUrl: "korg-todo-symbolic"
@@ -61,23 +76,81 @@ PlasmoidItem {
         return plasmoid.configuration.longBreakMinutes * 60
     }
 
-    function startTimer()  { pomodoroTimer.start(); isRunning = true;  isPaused = false }
-    function pauseTimer()  { pomodoroTimer.stop();  isRunning = false; isPaused = true  }
+    function startTimer() {
+        pomodoroTimer.start()
+        isRunning = true
+        isPaused  = false
+        timerEndTime      = new Date(Date.now() + root.remainingSeconds * 1000).toISOString()
+        timerLastModified = new Date().toISOString()
+        webdavSync.pushTimerState(root.sessionCount, root.timerMode, true,
+                                  root.timerEndTime, root.remainingSeconds, root.timerLastModified)
+    }
+
+    function pauseTimer() {
+        pomodoroTimer.stop()
+        isRunning = false
+        isPaused  = true
+        timerEndTime      = ""
+        timerLastModified = new Date().toISOString()
+        webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
+                                  "", root.remainingSeconds, root.timerLastModified)
+    }
 
     function resetCurrent() {
         pomodoroTimer.stop()
         isRunning = false
-        isPaused = false
-        remainingSeconds = modeDuration()
+        isPaused  = false
+        remainingSeconds  = modeDuration()
+        timerEndTime      = ""
+        timerLastModified = new Date().toISOString()
+        webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
+                                  "", root.remainingSeconds, root.timerLastModified)
     }
 
     function resetAll() {
         pomodoroTimer.stop()
         isRunning = false
-        isPaused = false
-        sessionCount = 0
-        timerMode = "work"
-        remainingSeconds = plasmoid.configuration.pomodoroMinutes * 60
+        isPaused  = false
+        sessionCount      = 0
+        timerMode         = "work"
+        remainingSeconds  = plasmoid.configuration.pomodoroMinutes * 60
+        timerEndTime      = ""
+        timerLastModified = new Date().toISOString()
+        webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
+                                  "", root.remainingSeconds, root.timerLastModified)
+    }
+
+    // Applies a remote timer state object if its lastModified is newer than ours.
+    function applyRemoteTimerState(data) {
+        if (!data || !data.lastModified) return
+        if (root.timerLastModified && data.lastModified <= root.timerLastModified) return
+
+        root.timerLastModified = data.lastModified
+
+        if (data.isRunning && data.endTime) {
+            var remaining = Math.round((new Date(data.endTime).getTime() - Date.now()) / 1000)
+            if (remaining <= 0) return
+            root.timerMode    = data.timerMode    || root.timerMode
+            root.sessionCount = data.sessionCount !== undefined ? data.sessionCount : root.sessionCount
+            root.timerEndTime = data.endTime
+            root.remainingSeconds = remaining
+            if (!root.isRunning) {
+                root.isRunning = true
+                root.isPaused  = false
+                pomodoroTimer.start()
+            }
+        } else {
+            if (root.isRunning) {
+                pomodoroTimer.stop()
+                root.isRunning = false
+                root.timerEndTime = ""
+            }
+            root.timerMode    = data.timerMode    || root.timerMode
+            root.sessionCount = data.sessionCount !== undefined ? data.sessionCount : root.sessionCount
+            var rem = data.remainingSeconds || 0
+            root.remainingSeconds = rem > 0 ? rem : root.modeDuration()
+            root.isPaused = rem > 0 && rem < root.modeDuration()
+        }
     }
 
     function advanceMode() {
@@ -180,6 +253,8 @@ PlasmoidItem {
 
         if (plasmoid.configuration.googleEnabled && plasmoid.configuration.googleAutoSync)
             Qt.callLater(function() { googleSync.sync() })
+        if (plasmoid.configuration.webdavEnabled && plasmoid.configuration.webdavAutoSync)
+            Qt.callLater(function() { webdavSync.sync() })
 
         plasmoid.setAction("startPause",    i18n("Start"),           "media-playback-start")
         plasmoid.setAction("resetCurrent",  i18n("Reset Current"),   "media-playback-stop")
@@ -190,7 +265,16 @@ PlasmoidItem {
         plasmoid.action("startPause").triggered.connect(function()    { root.isRunning ? root.pauseTimer() : root.startTimer() })
         plasmoid.action("resetCurrent").triggered.connect(function()  { root.resetCurrent() })
         plasmoid.action("resetAll").triggered.connect(function()      { root.resetAll() })
-        plasmoid.action("skip").triggered.connect(function()          { root.pauseTimer(); root.advanceMode() })
+        plasmoid.action("skip").triggered.connect(function() {
+            pomodoroTimer.stop()
+            root.isRunning = false
+            root.isPaused  = false
+            root.timerEndTime = ""
+            root.advanceMode()
+            root.timerLastModified = new Date().toISOString()
+            webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
+                                      "", root.remainingSeconds, root.timerLastModified)
+        })
         plasmoid.action("clearAllTasks").triggered.connect(function() { root.clearAllTasks() })
     }
 
@@ -228,11 +312,15 @@ PlasmoidItem {
             } else {
                 stop()
                 root.isRunning = false
+                root.timerEndTime = ""
                 var msg = root.timerMode === "work"
                           ? i18n("Focus session done! Time for a break.")
                           : i18n("Break over. Back to work!")
                 root.sendNotification("Pomodoro", msg)
                 root.advanceMode()
+                root.timerLastModified = new Date().toISOString()
+                webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
+                                          "", root.remainingSeconds, root.timerLastModified)
                 if (plasmoid.configuration.autoStartNext) root.startTimer()
             }
         }
@@ -241,10 +329,32 @@ PlasmoidItem {
     // ─── Reminder checker ─────────────────────────────────────────────────────
     Timer {
         id: reminderChecker
-        interval: 30000   // check every 30 s → max 30 s delay on notifications
+        interval: 30000
         repeat: true
         running: true
         onTriggered: root.checkReminders()
+    }
+
+    // ─── Live timer sync: fast-poll while running, normal interval at rest ────
+    Timer {
+        id: timerStatePollTimer
+        interval: 10000   // 10 s while running; 60 s while idle
+        repeat: true
+        running: plasmoid.configuration.webdavEnabled && plasmoid.configuration.webdavAutoSync
+        onTriggered: webdavSync.pollTimerState()
+        onRunningChanged: interval = root.isRunning ? 10000 : 60000
+    }
+
+    Connections {
+        target: root
+        function onIsRunningChanged() {
+            timerStatePollTimer.interval = root.isRunning ? 10000 : 60000
+        }
+    }
+
+    Connections {
+        target: webdavSync
+        function onTimerStateReceived(data) { root.applyRemoteTimerState(data) }
     }
 
     // ─── Task model ───────────────────────────────────────────────────────────
@@ -321,6 +431,85 @@ PlasmoidItem {
                 root.workspacesData = cur
                 plasmoid.configuration.tasks = JSON.stringify(cur)
             }
+
+            if (root.activeEdits > 0) root._pendingSyncReload = true
+            else root.loadTasks()
+        }
+    }
+
+    // ─── WebDAV sync ──────────────────────────────────────────────────────────
+    WebDavSync {
+        id: webdavSync
+        onSyncComplete: function(success, _msg) {
+            if (!success) return
+
+            var syncedData = webdavSync._lastSyncData
+            if (!Array.isArray(syncedData) || syncedData.length === 0) return
+
+            // Build name-indexed maps for safe, order-independent merge.
+            var cur = JSON.parse(JSON.stringify(root.workspacesData))
+            var syncedByName = {}
+            syncedData.forEach(function(ws) { if (ws.name) syncedByName[ws.name] = ws })
+            var curNames = {}
+            cur.forEach(function(ws) { if (ws.name) curNames[ws.name] = true })
+
+            cur = cur.map(function(localWs) {
+                var syncedWs = syncedByName[localWs.name]
+                if (!syncedWs) return localWs
+
+                var syncedByUid = {}
+                ;(syncedWs.tasks || []).forEach(function(t) { if (t.uid) syncedByUid[t.uid] = t })
+                var curByUid = {}
+                ;(localWs.tasks || []).forEach(function(t) { if (t.uid) curByUid[t.uid] = t })
+
+                // prevSynced: UIDs known at the previous sync — used to detect
+                // deletions that happened while the async sync was in flight.
+                var prevSynced = localWs.webdavSyncedUids || []
+
+                var result = []
+
+                ;(localWs.tasks || []).forEach(function(t) {
+                    if (!t.uid) { result.push(t); return }
+                    var s = syncedByUid[t.uid]
+                    if (!s) {
+                        // Not in sync result.
+                        // Not in prevSynced → added locally after sync started → keep.
+                        // In prevSynced → sync merge dropped it (remote deleted) → drop.
+                        if (prevSynced.indexOf(t.uid) < 0) result.push(t)
+                        return
+                    }
+                    // In sync result — apply remote updates if remote is newer.
+                    var m = JSON.parse(JSON.stringify(t))
+                    if (s.lastModified > (t.lastModified || "")) {
+                        m.title = s.title; m.description = s.description
+                        m.done  = s.done;  m.lastModified = s.lastModified
+                        if (s.reminder !== undefined) m.reminder = s.reminder
+                    }
+                    result.push(m)
+                })
+
+                // Tasks pulled from remote that are genuinely new (not locally deleted).
+                ;(syncedWs.tasks || []).forEach(function(t) {
+                    if (!t.uid || curByUid[t.uid]) return
+                    // Not in prevSynced → new from remote → add.
+                    // In prevSynced → locally deleted during sync → skip.
+                    if (prevSynced.indexOf(t.uid) < 0) result.push(t)
+                })
+
+                var merged = JSON.parse(JSON.stringify(localWs))
+                merged.tasks            = result
+                merged.webdavSyncedUids = syncedWs.webdavSyncedUids || []
+                return merged
+            })
+
+            // Workspaces added from a remote client that don't yet exist locally.
+            syncedData.forEach(function(syncedWs) {
+                if (syncedWs.name && !curNames[syncedWs.name])
+                    cur.push(JSON.parse(JSON.stringify(syncedWs)))
+            })
+
+            root.workspacesData = cur
+            plasmoid.configuration.tasks = JSON.stringify(cur)
 
             if (root.activeEdits > 0) root._pendingSyncReload = true
             else root.loadTasks()
@@ -427,6 +616,8 @@ PlasmoidItem {
                 lastModified: t.lastModified || "",
                 googleTaskId: t.googleTaskId || "",
                 reminder:     t.reminder     || "",
+                urgent:       t.urgent       || false,
+                important:    t.important    || false,
                 expanded:     !!(t.uid && expandedUids[t.uid]),
                 editDesc:     false
             })
@@ -450,13 +641,17 @@ PlasmoidItem {
                 || prev.title       !== t.title
                 || prev.description !== t.description
                 || prev.done        !== t.done
-                || (prev.reminder || "") !== (t.reminder || "")
+                || (prev.reminder   || "") !== (t.reminder || "")
+                || !!prev.urgent    !== !!t.urgent
+                || !!prev.important !== !!t.important
             tasks.push({
                 title:        t.title,
                 description:  t.description,
                 done:         t.done,
                 uid:          uid,
-                reminder:     t.reminder     || "",
+                reminder:     t.reminder  || "",
+                urgent:       !!t.urgent,
+                important:    !!t.important,
                 lastModified: changed ? now : (prev && prev.lastModified || now),
                 googleTaskId: t.googleTaskId || (prev && prev.googleTaskId || "")
             })
@@ -489,8 +684,9 @@ PlasmoidItem {
         var migrated = false
         var now = new Date().toISOString()
         workspacesData = workspacesData.map(function(ws) {
-            if (!ws.googleTaskListId) { ws.googleTaskListId = ""; migrated = true }
-            if (!ws.googleSyncedIds)  { ws.googleSyncedIds  = []; migrated = true }
+            if (!ws.googleTaskListId)  { ws.googleTaskListId  = ""; migrated = true }
+            if (!ws.googleSyncedIds)  { ws.googleSyncedIds   = []; migrated = true }
+            if (!ws.webdavSyncedUids) { ws.webdavSyncedUids  = []; migrated = true }
             ws.tasks = (ws.tasks || []).map(function(t) {
                 if (!t.uid)          { t.uid          = root.generateUid(); migrated = true }
                 if (!t.lastModified) { t.lastModified = now;                migrated = true }
@@ -517,6 +713,11 @@ PlasmoidItem {
                 && !googleSync.isSyncing) {
             googleSync.schedulePush()
         }
+        if (plasmoid.configuration.webdavEnabled
+                && plasmoid.configuration.webdavAutoSync
+                && !webdavSync.isSyncing) {
+            webdavSync.schedulePush()
+        }
     }
 
     function addTask(title) {
@@ -530,11 +731,43 @@ PlasmoidItem {
             uid:          root.generateUid(),
             lastModified: new Date().toISOString(),
             reminder:     "",
+            urgent:       false,
+            important:    false,
             expanded:     autoExpand,
             editDesc:     autoExpand
         })
         saveTasks()
         return true
+    }
+
+    function setTaskUrgent(uid, value) {
+        for (var i = 0; i < taskModel.count; i++) {
+            if (taskModel.get(i).uid === uid) {
+                taskModel.setProperty(i, "urgent", value)
+                saveTasks()
+                return
+            }
+        }
+    }
+
+    function setTaskImportant(uid, value) {
+        for (var i = 0; i < taskModel.count; i++) {
+            if (taskModel.get(i).uid === uid) {
+                taskModel.setProperty(i, "important", value)
+                saveTasks()
+                return
+            }
+        }
+    }
+
+    function matrixToggleDone(uid) {
+        for (var i = 0; i < taskModel.count; i++) {
+            if (taskModel.get(i).uid === uid) {
+                taskModel.setProperty(i, "done", !taskModel.get(i).done)
+                saveTasks()
+                return
+            }
+        }
     }
 
     function switchWorkspace(index) {
@@ -769,7 +1002,16 @@ PlasmoidItem {
                 PlasmaComponents3.Button {
                     text: i18n("Skip")
                     icon.name: "media-skip-forward"
-                    onClicked: { root.pauseTimer(); root.advanceMode() }
+                    onClicked: {
+                        pomodoroTimer.stop()
+                        root.isRunning = false
+                        root.isPaused  = false
+                        root.timerEndTime = ""
+                        root.advanceMode()
+                        root.timerLastModified = new Date().toISOString()
+                        webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
+                                                  "", root.remainingSeconds, root.timerLastModified)
+                    }
                     QQC2.ToolTip.text: i18n("Skip to next step")
                     QQC2.ToolTip.visible: hovered
                     QQC2.ToolTip.delay: 800
@@ -818,6 +1060,16 @@ PlasmoidItem {
                 }
 
                 PlasmaComponents3.ToolButton {
+                    icon.name: root.taskViewMode === "matrix" ? "view-list-text" : "view-grid"
+                    flat: true
+                    onClicked: root.taskViewMode = (root.taskViewMode === "list" ? "matrix" : "list")
+                    QQC2.ToolTip.text: root.taskViewMode === "matrix"
+                        ? i18n("List view") : i18n("Eisenhower matrix")
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.delay: 600
+                }
+
+                PlasmaComponents3.ToolButton {
                     icon.name: "edit-clear-all"
                     visible: root.doneCount > 0
                     onClicked: clearConfirmDialog.open()
@@ -844,6 +1096,27 @@ PlasmoidItem {
                         NumberAnimation { target: syncBtn; property: "opacity"; to: 0.3; duration: 500; easing.type: Easing.InOutSine }
                         NumberAnimation { target: syncBtn; property: "opacity"; to: 1.0; duration: 500; easing.type: Easing.InOutSine }
                         onRunningChanged: if (!running) syncBtn.opacity = 1.0
+                    }
+                }
+
+                PlasmaComponents3.ToolButton {
+                    id: webdavSyncBtn
+                    visible: plasmoid.configuration.webdavEnabled
+                    flat: true
+                    icon.name: webdavSync.syncStatus === "error" ? "dialog-error" : "network-server"
+                    onClicked: webdavSync.sync()
+                    QQC2.ToolTip.text: webdavSync.syncMessage.length > 0
+                                       ? webdavSync.syncMessage
+                                       : i18n("Sync with WebDAV")
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.delay: 600
+
+                    SequentialAnimation {
+                        running: webdavSync.isSyncing
+                        loops: Animation.Infinite
+                        NumberAnimation { target: webdavSyncBtn; property: "opacity"; to: 0.3; duration: 500; easing.type: Easing.InOutSine }
+                        NumberAnimation { target: webdavSyncBtn; property: "opacity"; to: 1.0; duration: 500; easing.type: Easing.InOutSine }
+                        onRunningChanged: if (!running) webdavSyncBtn.opacity = 1.0
                     }
                 }
             }
@@ -1184,10 +1457,10 @@ PlasmoidItem {
                 Layout.minimumHeight: Kirigami.Units.gridUnit * 4
                 Layout.preferredHeight: Math.max(
                     Kirigami.Units.gridUnit * 4,
-                    root.popupBaseHeight
-                    - (Kirigami.Units.gridUnit * 22)
+                    root.popupBaseHeight - (Kirigami.Units.gridUnit * 22)
                 )
                 clip: true
+                visible: root.taskViewMode === "list"
                 QQC2.ScrollBar.horizontal.policy: QQC2.ScrollBar.AlwaysOff
 
                 ListView {
@@ -1202,7 +1475,9 @@ PlasmoidItem {
                         taskDescription: model.description
                         taskDone:        model.done
                         taskExpanded:    model.expanded
-                        taskReminder:    model.reminder || ""
+                        taskReminder:    model.reminder   || ""
+                        taskUrgent:      model.urgent     || false
+                        taskImportant:   model.important  || false
 
                         // Auto-focus description on newly added tasks when config enabled
                         Component.onCompleted: {
@@ -1238,8 +1513,129 @@ PlasmoidItem {
                             taskModel.setProperty(index, "reminder", isoDatetime)
                             root.saveTasks()
                         }
+                        onUrgentToggled: {
+                            taskModel.setProperty(index, "urgent", !model.urgent)
+                            root.saveTasks()
+                        }
+                        onImportantToggled: {
+                            taskModel.setProperty(index, "important", !model.important)
+                            root.saveTasks()
+                        }
                         onEditingStarted: root.activeEdits++
                         onEditingEnded:   root.activeEdits = Math.max(0, root.activeEdits - 1)
+                    }
+                }
+            }
+
+            // ── Eisenhower matrix view ────────────────────────────────────
+            GridLayout {
+                id: matrixGrid
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: Kirigami.Units.gridUnit * 4
+                Layout.preferredHeight: taskScroll.Layout.preferredHeight
+                visible: root.taskViewMode === "matrix"
+                columns: 2
+                rows: 2
+                rowSpacing: 4
+                columnSpacing: 4
+
+                Repeater {
+                    model: [
+                        { label: i18n("Do First"),  sub: i18n("Urgent + Important"),      color: "#e74c3c", qi: 0 },
+                        { label: i18n("Schedule"),   sub: i18n("Important, not Urgent"),   color: "#3498db", qi: 1 },
+                        { label: i18n("Delegate"),   sub: i18n("Urgent, not Important"),   color: "#f39c12", qi: 2 },
+                        { label: i18n("Eliminate"),  sub: i18n("Neither"),                 color: "#95a5a6", qi: 3 }
+                    ]
+                    delegate: Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        radius: 6
+                        border.color: Qt.rgba(0,0,0,0.12)
+                        border.width: 1
+                        color: Kirigami.Theme.backgroundColor
+
+                        readonly property var qTasks: root.quadrantTasks[modelData.qi] || []
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            spacing: 0
+
+                            // Header
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: Kirigami.Units.gridUnit * 2
+                                radius: 6
+                                // Flat bottom corners
+                                layer.enabled: false
+                                color: modelData.color
+
+                                ColumnLayout {
+                                    anchors {
+                                        fill: parent
+                                        leftMargin: Kirigami.Units.smallSpacing * 1.5
+                                        rightMargin: Kirigami.Units.smallSpacing
+                                        topMargin: 3; bottomMargin: 3
+                                    }
+                                    spacing: 0
+                                    PlasmaComponents3.Label {
+                                        text: modelData.label
+                                        font.bold: true
+                                        font.pixelSize: Kirigami.Units.gridUnit * 0.85
+                                        color: "white"
+                                    }
+                                    PlasmaComponents3.Label {
+                                        text: modelData.sub
+                                        font.pixelSize: Kirigami.Units.gridUnit * 0.65
+                                        color: Qt.rgba(1,1,1,0.85)
+                                    }
+                                }
+                            }
+
+                            // Task list
+                            QQC2.ScrollView {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                clip: true
+                                QQC2.ScrollBar.horizontal.policy: QQC2.ScrollBar.AlwaysOff
+
+                                Column {
+                                    width: parent.width
+                                    Repeater {
+                                        model: parent.parent.parent.parent.qTasks
+                                        delegate: RowLayout {
+                                            width: parent.width
+                                            spacing: 0
+                                            PlasmaComponents3.CheckBox {
+                                                checked: modelData.done
+                                                onToggled: root.matrixToggleDone(modelData.uid)
+                                            }
+                                            PlasmaComponents3.Label {
+                                                Layout.fillWidth: true
+                                                text: modelData.title
+                                                elide: Text.ElideRight
+                                                opacity: modelData.done ? 0.45 : 1.0
+                                                font.strikeout: modelData.done
+                                                font.pixelSize: Kirigami.Units.gridUnit * 0.85
+                                                wrapMode: Text.WordWrap
+                                                maximumLineCount: 2
+                                                Layout.rightMargin: Kirigami.Units.smallSpacing
+                                            }
+                                        }
+                                    }
+                                    PlasmaComponents3.Label {
+                                        visible: parent.parent.parent.parent.parent.parent.qTasks.length === 0
+                                        width: parent.width
+                                        text: i18n("Empty")
+                                        horizontalAlignment: Text.AlignHCenter
+                                        opacity: 0.4
+                                        font.italic: true
+                                        font.pixelSize: Kirigami.Units.gridUnit * 0.8
+                                        topPadding: Kirigami.Units.smallSpacing
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

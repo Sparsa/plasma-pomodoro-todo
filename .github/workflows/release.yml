@@ -1,0 +1,213 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  # ────────────────────────────────────────────────────
+  # Android APK
+  # ────────────────────────────────────────────────────
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.x'
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build apk --release --split-per-abi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apks
+          path: mobile/build/app/outputs/flutter-apk/*.apk
+
+  # ────────────────────────────────────────────────────
+  # Linux AppImage
+  # ────────────────────────────────────────────────────
+  linux:
+    name: Linux AppImage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev \
+            libsecret-1-dev libjsoncpp-dev \
+            fuse libfuse2 wget
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.x'
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build linux --release
+
+      - name: Package as AppImage
+        run: |
+          APP_DIR="AppDir"
+          BUILD="build/linux/x64/release/bundle"
+
+          mkdir -p "$APP_DIR/usr/bin"
+          mkdir -p "$APP_DIR/usr/lib"
+          mkdir -p "$APP_DIR/usr/share/icons/hicolor/256x256/apps"
+
+          cp -r "$BUILD"/. "$APP_DIR/usr/bin/"
+
+          # AppImage desktop + icon scaffolding
+          cat > "$APP_DIR/pomodoro_todo.desktop" <<EOF
+          [Desktop Entry]
+          Name=Pomodoro Todo
+          Exec=pomodoro_todo
+          Icon=pomodoro_todo
+          Type=Application
+          Categories=Utility;
+          EOF
+
+          # Placeholder icon — replace with your actual icon if available
+          if [ -f "../contents/images/plasma-pomodoro-todo.png" ]; then
+            cp ../contents/images/plasma-pomodoro-todo.png \
+               "$APP_DIR/usr/share/icons/hicolor/256x256/apps/pomodoro_todo.png"
+            cp ../contents/images/plasma-pomodoro-todo.png "$APP_DIR/pomodoro_todo.png"
+          else
+            # generate a 1×1 placeholder so appimagetool doesn't error
+            printf '\x89PNG\r\n\x1a\n' > "$APP_DIR/pomodoro_todo.png"
+          fi
+
+          cat > "$APP_DIR/AppRun" <<'APPRUN'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="$HERE/usr/lib:$LD_LIBRARY_PATH"
+          exec "$HERE/usr/bin/pomodoro_todo" "$@"
+          APPRUN
+          chmod +x "$APP_DIR/AppRun"
+
+          wget -q \
+            "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" \
+            -O appimagetool
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool "$APP_DIR" "PomodoroTodo-${{ github.ref_name }}-x86_64.AppImage"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: mobile/PomodoroTodo-*.AppImage
+
+  # ────────────────────────────────────────────────────
+  # macOS .dmg
+  # ────────────────────────────────────────────────────
+  macos:
+    name: macOS DMG
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.x'
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build macos --release
+
+      - name: Create DMG
+        run: |
+          APP="build/macos/Build/Products/Release/pomodoro_todo.app"
+          DMG="PomodoroTodo-${{ github.ref_name }}-macOS.dmg"
+          hdiutil create -volname "PomodoroTodo" \
+            -srcfolder "$APP" \
+            -ov -format UDZO "$DMG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: mobile/PomodoroTodo-*.dmg
+
+  # ────────────────────────────────────────────────────
+  # iOS unsigned IPA
+  # ────────────────────────────────────────────────────
+  ios:
+    name: iOS IPA (unsigned)
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.x'
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      - name: Build unsigned IPA
+        run: |
+          flutter build ios --release --no-codesign
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
+          zip -r "../../../PomodoroTodo-${{ github.ref_name }}-ios-unsigned.ipa" Payload/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: mobile/PomodoroTodo-*.ipa
+
+  # ────────────────────────────────────────────────────
+  # GitHub Release
+  # ────────────────────────────────────────────────────
+  release:
+    name: GitHub Release
+    needs: [android, linux, macos, ios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/**
