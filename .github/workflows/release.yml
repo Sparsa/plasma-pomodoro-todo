@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
 
@@ -74,7 +74,7 @@ jobs:
           ANDROID_KEY_ALIAS:         ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD:      ${{ secrets.ANDROID_KEY_PASSWORD }}
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: android-apks
           path: mobile/build/app/outputs/flutter-apk/*.apk
@@ -92,7 +92,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
 
@@ -166,7 +166,7 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 ./appimagetool \
             "$APP_DIR" "PomodoroTodo-${{ github.ref_name }}-x86_64.AppImage"
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: linux-appimage
           path: mobile/PomodoroTodo-*.AppImage
@@ -184,7 +184,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
 
@@ -204,7 +204,7 @@ jobs:
             -srcfolder "$APP" \
             -ov -format UDZO "$DMG"
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: macos-dmg
           path: mobile/PomodoroTodo-*.dmg
@@ -222,7 +222,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
 
@@ -241,7 +241,7 @@ jobs:
           cp -r Runner.app Payload/
           zip -r "../../../PomodoroTodo-${{ github.ref_name }}-ios-unsigned.ipa" Payload/
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: ios-ipa
           path: mobile/PomodoroTodo-*.ipa
@@ -259,7 +259,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
 
@@ -278,7 +278,7 @@ jobs:
           $zip = "PomodoroTodo-${{ github.ref_name }}-windows.zip"
           Compress-Archive -Path "$src\*" -DestinationPath $zip
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: windows-zip
           path: mobile/PomodoroTodo-*.zip
@@ -299,7 +299,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v6
         with:
           path: dist
           merge-multiple: true
