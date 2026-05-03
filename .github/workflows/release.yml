@@ -219,13 +219,50 @@ jobs:
           path: mobile/PomodoroTodo-*.ipa
 
   # ────────────────────────────────────────────────────
+  # Windows ZIP
+  # ────────────────────────────────────────────────────
+  windows:
+    name: Windows ZIP
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter build windows --release
+
+      - name: Package as ZIP
+        shell: pwsh
+        run: |
+          $src = "build\windows\x64\runner\Release"
+          $zip = "PomodoroTodo-${{ github.ref_name }}-windows.zip"
+          Compress-Archive -Path "$src\*" -DestinationPath $zip
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: windows-zip
+          path: mobile/PomodoroTodo-*.zip
+
+  # ────────────────────────────────────────────────────
   # GitHub Release
   # Runs even if individual build jobs fail so you still
   # get a release with whatever artifacts succeeded.
   # ────────────────────────────────────────────────────
   release:
     name: GitHub Release
-    needs: [android, linux, macos, ios]
+    needs: [android, linux, macos, ios, windows]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
