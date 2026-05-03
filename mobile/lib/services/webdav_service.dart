@@ -13,6 +13,13 @@ class AuthException implements Exception {
   String toString() => message;
 }
 
+class RateLimitException implements Exception {
+  final Duration retryAfter;
+  const RateLimitException(this.retryAfter);
+  @override
+  String toString() => 'Server rate-limited — retry in ${retryAfter.inSeconds}s';
+}
+
 class WebDavService {
   final String fileUrl;
   final String username;
@@ -50,6 +57,9 @@ class WebDavService {
       throw const AuthException(
           'Authentication failed — check credentials in Settings');
     }
+    if (response.statusCode == 429) {
+      throw RateLimitException(_retryAfter(response.headers));
+    }
     if (response.statusCode != 200) {
       throw Exception('HTTP ${response.statusCode}');
     }
@@ -78,6 +88,9 @@ class WebDavService {
         .timeout(const Duration(seconds: 15));
 
     if (response.statusCode == 412) throw const ConflictException();
+    if (response.statusCode == 429) {
+      throw RateLimitException(_retryAfter(response.headers));
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('HTTP ${response.statusCode}');
     }
@@ -124,6 +137,15 @@ class WebDavService {
       }
     } catch (_) {}
     return null;
+  }
+
+  static Duration _retryAfter(Map<String, String> headers) {
+    final v = headers['retry-after'] ?? headers['Retry-After'];
+    if (v != null) {
+      final secs = int.tryParse(v);
+      if (secs != null) return Duration(seconds: secs);
+    }
+    return const Duration(seconds: 60);
   }
 
   // HEAD request used by ConfigScreen to verify credentials and reachability.
