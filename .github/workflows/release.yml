@@ -77,7 +77,7 @@ jobs:
           # Copy entire Flutter bundle — data/ and lib/ must stay next to the executable
           cp -r "$BUILD"/. "$APP_DIR/usr/bin/"
 
-          # Desktop file written with echo to avoid YAML-indentation leading spaces
+          # Desktop file written with echo to avoid YAML-indentation leading-space problem
           # (appimagetool rejects desktop files with leading whitespace)
           {
             echo '[Desktop Entry]'
@@ -94,7 +94,7 @@ jobs:
                "$APP_DIR/usr/share/icons/hicolor/256x256/apps/pomodoro_todo.png"
             cp ../contents/images/plasma-pomodoro-todo.png "$APP_DIR/pomodoro_todo.png"
           else
-            # Valid 1×1 transparent PNG (base64-encoded)
+            # Valid 1×1 transparent PNG
             python3 -c "
           import base64
           open('$APP_DIR/pomodoro_todo.png','wb').write(base64.b64decode(
@@ -102,7 +102,7 @@ jobs:
           ))"
           fi
 
-          # AppRun — LD_LIBRARY_PATH must include usr/bin/lib/ where Flutter's .so files land
+          # AppRun — LD_LIBRARY_PATH must point to lib/ inside the bundle (usr/bin/lib/)
           {
             echo '#!/bin/bash'
             echo 'HERE="$(dirname "$(readlink -f "${0}")")"'
@@ -194,10 +194,13 @@ jobs:
 
   # ────────────────────────────────────────────────────
   # GitHub Release
+  # Runs even if individual build jobs fail so you still
+  # get a release with whatever artifacts succeeded.
   # ────────────────────────────────────────────────────
   release:
     name: GitHub Release
     needs: [android, linux, macos, ios]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -210,8 +213,12 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: List collected artifacts
+        run: find dist -type f | sort
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          fail_on_unmatched_files: false
           files: dist/**
