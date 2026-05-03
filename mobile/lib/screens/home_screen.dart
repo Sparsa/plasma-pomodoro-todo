@@ -129,7 +129,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Pomodoro Todo'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Image.asset('assets/plasma-pomodoro-todo.png', width: 28, height: 28),
+            const SizedBox(width: 8),
+            const Text('Pomodoro Todo'),
+          ],
+        ),
         actions: [
           if (state.webdavUrl.isNotEmpty) _SyncButton(state: state),
           if (state.googleEmail != null) _GoogleSyncButton(state: state),

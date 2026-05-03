@@ -253,13 +253,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           // ── About ────────────────────────────────────────────────────────
           _SectionHeader('About'),
-          const SizedBox(height: 8),
-          const Text(
-            'Companion app for the KDE Plasma Pomodoro Todo plasmoid.\n'
-            'Tasks sync via a shared JSON file on your WebDAV server.\n\n'
-            'Long-press a task to rename it.\n'
-            'Swipe left to delete.',
-            style: TextStyle(fontSize: 13, color: Colors.grey),
+          const SizedBox(height: 12),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Image.asset(
+              'assets/plasma-pomodoro-todo.png',
+              width: 40,
+              height: 40,
+            ),
+            title: const Text('Pomodoro Todo'),
+            subtitle: const Text('KDE Plasma plasmoid + mobile companion'),
+            onTap: () => showAboutDialog(
+              context: context,
+              applicationName: 'Pomodoro Todo',
+              applicationIcon: Image.asset(
+                'assets/plasma-pomodoro-todo.png',
+                width: 64,
+                height: 64,
+              ),
+              children: const [
+                Text(
+                  'Companion app for the KDE Plasma Pomodoro Todo plasmoid.\n'
+                  'Tasks sync via a shared JSON file on your WebDAV server.\n\n'
+                  'Long-press a task to rename it.\n'
+                  'Swipe left to delete.',
+                ),
+              ],
+            ),
           ),
         ],
       ),

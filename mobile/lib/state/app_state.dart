@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../models/workspace.dart';
@@ -68,6 +69,7 @@ class AppState extends ChangeNotifier {
   bool _rateLimited = false;
   WebDavService? _webdav;
   final _uuid = const Uuid();
+  final _rng = Random();
   DateTime? _timerEndTime;
 
   // ── Init ───────────────────────────────────────────────────────────────────
@@ -161,7 +163,8 @@ class AppState extends ChangeNotifier {
       try {
         await _webdav!.putWorkspaces(merged, etag);
       } on ConflictException {
-        // Another client wrote the file while we were merging — retry once.
+        // Another client wrote the file while we were merging — back off then retry once.
+        await Future.delayed(Duration(milliseconds: 200 + _rng.nextInt(300)));
         final (etag2, remote2) = await _webdav!.getWorkspaces();
         final merged2 = remote2 == null || remote2.isEmpty
             ? merged

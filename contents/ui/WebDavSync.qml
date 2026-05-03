@@ -204,25 +204,27 @@ Item {
 
             _put(url, username, password, merged, etag, function(putOk, newEtag, conflict) {
                 if (conflict) {
-                    // Another client wrote the file while we were merging — retry once.
-                    _get(url, username, password, function(ok2, etag2, remote2) {
-                        if (!ok2) {
-                            isSyncing   = false
-                            syncStatus  = "error"
-                            syncMessage = i18n("Sync conflict — retry failed")
-                            syncComplete(false, syncMessage)
-                            return
-                        }
-                        var merged2 = remote2 === null
-                            ? JSON.parse(JSON.stringify(local))
-                            : _merge(local, remote2)
-                        merged2 = merged2.map(function(ws) {
-                            var copy = JSON.parse(JSON.stringify(ws))
-                            copy.webdavSyncedUids = (copy.tasks || []).map(function(t) { return t.uid }).filter(Boolean)
-                            return copy
-                        })
-                        _put(url, username, password, merged2, etag2, function(ok3, etagOrMsg3) {
-                            _finish(ok3, etagOrMsg3, merged2)
+                    // Another client wrote the file — back off then retry once.
+                    _delayedRetry(function() {
+                        _get(url, username, password, function(ok2, etag2, remote2) {
+                            if (!ok2) {
+                                isSyncing   = false
+                                syncStatus  = "error"
+                                syncMessage = i18n("Sync conflict — retry failed")
+                                syncComplete(false, syncMessage)
+                                return
+                            }
+                            var merged2 = remote2 === null
+                                ? JSON.parse(JSON.stringify(local))
+                                : _merge(local, remote2)
+                            merged2 = merged2.map(function(ws) {
+                                var copy = JSON.parse(JSON.stringify(ws))
+                                copy.webdavSyncedUids = (copy.tasks || []).map(function(t) { return t.uid }).filter(Boolean)
+                                return copy
+                            })
+                            _put(url, username, password, merged2, etag2, function(ok3, etagOrMsg3) {
+                                _finish(ok3, etagOrMsg3, merged2)
+                            })
                         })
                     })
                     return
@@ -441,6 +443,24 @@ Item {
     }
 
     // ── Timers ─────────────────────────────────────────────────────────────────
+
+    Timer {
+        id: conflictRetryTimer
+        repeat: false
+        property var pendingFn: null
+        onTriggered: {
+            var fn = pendingFn
+            pendingFn = null
+            if (fn) fn()
+        }
+    }
+
+    function _delayedRetry(fn) {
+        conflictRetryTimer.stop()
+        conflictRetryTimer.pendingFn = fn
+        conflictRetryTimer.interval = 200 + Math.floor(Math.random() * 300)
+        conflictRetryTimer.start()
+    }
 
     Timer {
         id: periodicTimer
