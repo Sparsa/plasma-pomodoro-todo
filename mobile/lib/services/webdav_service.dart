@@ -107,6 +107,7 @@ class WebDavService {
     String? endTime,
     int remainingSeconds = 0,
     required String lastModified,
+    String activeTaskId = '',
   }) async {
     final body = <String, dynamic>{
       'sessionCount': sessionCount,
@@ -121,6 +122,7 @@ class WebDavService {
     }
     // endTime kept for backward compat with older clients
     if (endTime != null) body['endTime'] = endTime;
+    if (activeTaskId.isNotEmpty) body['activeTaskId'] = activeTaskId;
 
     await http
         .put(

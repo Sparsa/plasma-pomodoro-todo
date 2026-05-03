@@ -99,4 +99,9 @@ class SettingsService {
       (await _p).setInt('shortBreakMinutes', v);
   static Future<void> saveLongBreakMinutes(int v) async =>
       (await _p).setInt('longBreakMinutes', v);
+
+  static Future<String> getActiveTaskId() async =>
+      (await _p).getString('activeTaskId') ?? '';
+  static Future<void> saveActiveTaskId(String v) async =>
+      (await _p).setString('activeTaskId', v);
 }

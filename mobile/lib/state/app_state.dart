@@ -50,6 +50,7 @@ class AppState extends ChangeNotifier {
   bool isPaused = false;
   String timerMode = 'work'; // 'work' | 'shortBreak' | 'longBreak'
   int sessionCount = 0;
+  String activeTaskId = '';
 
   // ── Sync ───────────────────────────────────────────────────────────────────
   SyncStatus syncStatus = SyncStatus.idle;
@@ -83,6 +84,7 @@ class AppState extends ChangeNotifier {
     shortBreakMinutes = await SettingsService.getShortBreakMinutes();
     longBreakMinutes = await SettingsService.getLongBreakMinutes();
     remainingSeconds = pomodoroMinutes * 60;
+    activeTaskId = await SettingsService.getActiveTaskId();
 
     final password = await SettingsService.getPassword();
     _hasPassword = password != null && password.isNotEmpty;
@@ -303,8 +305,13 @@ class AppState extends ChangeNotifier {
   void toggleTask(int wsIndex, int taskIndex) {
     final ws = workspaces[wsIndex];
     final task = ws.tasks[taskIndex];
+    final becomingDone = !task.done;
+    if (becomingDone && task.uid == activeTaskId) {
+      activeTaskId = '';
+      SettingsService.saveActiveTaskId('');
+    }
     final newTasks = List<Task>.from(ws.tasks)
-      ..[taskIndex] = task.copyWith(done: !task.done, lastModified: _now);
+      ..[taskIndex] = task.copyWith(done: becomingDone, lastModified: _now);
     workspaces = List.from(workspaces)
       ..[wsIndex] = ws.copyWith(tasks: newTasks);
     notifyListeners();
@@ -313,11 +320,21 @@ class AppState extends ChangeNotifier {
 
   void deleteTask(int wsIndex, int taskIndex) {
     final ws = workspaces[wsIndex];
+    if (ws.tasks[taskIndex].uid == activeTaskId) {
+      activeTaskId = '';
+      SettingsService.saveActiveTaskId('');
+    }
     final newTasks = List<Task>.from(ws.tasks)..removeAt(taskIndex);
     workspaces = List.from(workspaces)
       ..[wsIndex] = ws.copyWith(tasks: newTasks);
     notifyListeners();
     schedulePush();
+  }
+
+  Future<void> setActiveTask(String uid) async {
+    activeTaskId = uid;
+    await SettingsService.saveActiveTaskId(uid);
+    notifyListeners();
   }
 
   void updateTaskTitle(int wsIndex, int taskIndex, String newTitle) {
@@ -472,8 +489,15 @@ class AppState extends ChangeNotifier {
     final remoteRemaining = data['remainingSeconds'] as int? ?? 0;
     final remoteTotalDuration = data['totalDuration'] as int?;
     final remoteEndTimeStr = data['endTime'] as String?;
+    final remoteActiveTaskId = data['activeTaskId'] as String? ?? '';
 
     _timerLastModified = remoteModStr;
+
+    // Adopt the remote active task if one is set (keeps all clients in sync).
+    if (remoteActiveTaskId.isNotEmpty && remoteActiveTaskId != activeTaskId) {
+      activeTaskId = remoteActiveTaskId;
+      SettingsService.saveActiveTaskId(remoteActiveTaskId);
+    }
 
     if (remoteRunning) {
       int remaining;
@@ -552,13 +576,36 @@ class AppState extends ChangeNotifier {
       isRunning = false;
       isPaused = false;
       final completedLabel = timerLabel;
+      final wasWork = timerMode == 'work';
       _advanceMode();
+      if (wasWork && activeTaskId.isNotEmpty) {
+        _incrementPomodoroCount(activeTaskId);
+      }
       _timerEndTime = null;
       _restartTimerPoll(active: false);
       NotificationService.cancelAll();
       NotificationService.showComplete(completedLabel);
       pushTimerState(sessionCount, timerMode); // retried until WebDAV confirms
       notifyListeners();
+    }
+  }
+
+  void _incrementPomodoroCount(String uid) {
+    for (var i = 0; i < workspaces.length; i++) {
+      final ws = workspaces[i];
+      final taskIdx = ws.tasks.indexWhere((t) => t.uid == uid);
+      if (taskIdx >= 0) {
+        final task = ws.tasks[taskIdx];
+        final newTasks = List<Task>.from(ws.tasks)
+          ..[taskIdx] = task.copyWith(
+            pomodorosCompleted: task.pomodorosCompleted + 1,
+            lastModified: _now,
+          );
+        workspaces = List.from(workspaces)
+          ..[i] = ws.copyWith(tasks: newTasks);
+        schedulePush();
+        return;
+      }
     }
   }
 
@@ -603,22 +650,17 @@ class AppState extends ChangeNotifier {
     if (_webdav == null) return;
     final startTime = isRunning ? DateTime.now().toUtc().toIso8601String() : null;
     final endTime = _timerEndTime?.toUtc().toIso8601String(); // backward compat
-    final mod = _timerLastModified;
-    final count = sessionCount;
-    final mode = timerMode;
-    final running = isRunning;
-    final remaining = remainingSeconds;
-    final total = _timerTotalDuration;
     _webdav!
         .putTimerState(
-          sessionCount: count,
-          timerMode: mode,
-          isRunning: running,
+          sessionCount: sessionCount,
+          timerMode: timerMode,
+          isRunning: isRunning,
           startTime: startTime,
-          totalDuration: total,
+          totalDuration: _timerTotalDuration,
           endTime: endTime,
-          remainingSeconds: remaining,
-          lastModified: mod,
+          remainingSeconds: remainingSeconds,
+          lastModified: _timerLastModified,
+          activeTaskId: activeTaskId,
         )
         .ignore();
   }

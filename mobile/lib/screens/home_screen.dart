@@ -378,7 +378,159 @@ class _TimerCard extends StatelessWidget {
             'Sessions today: ${state.sessionCount}',
             style: const TextStyle(fontSize: 12, color: Colors.grey),
           ),
+          const SizedBox(height: 8),
+          const Divider(height: 1),
+          _ActiveTaskRow(state: state, modeColor: _modeColor),
         ]),
+      ),
+    );
+  }
+}
+
+// ── Active task selector ──────────────────────────────────────────────────────
+class _ActiveTaskRow extends StatelessWidget {
+  final AppState state;
+  final Color modeColor;
+  const _ActiveTaskRow({required this.state, required this.modeColor});
+
+  Task? get _activeTask {
+    if (state.activeTaskId.isEmpty) return null;
+    for (final ws in state.workspaces) {
+      try {
+        return ws.tasks.firstWhere((t) => t.uid == state.activeTaskId);
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final task = _activeTask;
+    return InkWell(
+      onTap: () => _showPicker(context),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Row(children: [
+          Icon(
+            task != null ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+            size: 16,
+            color: task != null ? modeColor : Colors.grey,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              task?.title ?? 'Focus on a task…',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                color: task != null ? null : Colors.grey,
+              ),
+            ),
+          ),
+          if (task != null && task.pomodorosCompleted > 0) ...[
+            const SizedBox(width: 6),
+            Text(
+              '🍅×${task.pomodorosCompleted}',
+              style: const TextStyle(fontSize: 12),
+            ),
+          ],
+          const SizedBox(width: 4),
+          const Icon(Icons.arrow_drop_down, size: 18, color: Colors.grey),
+        ]),
+      ),
+    );
+  }
+
+  void _showPicker(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => _TaskPickerSheet(state: state),
+    );
+  }
+}
+
+class _TaskPickerSheet extends StatelessWidget {
+  final AppState state;
+  const _TaskPickerSheet({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final ws = state.workspaces.isEmpty
+        ? null
+        : state.workspaces[state.currentWorkspace];
+    final tasks = (ws?.tasks ?? []).where((t) => !t.done).toList();
+
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+            child: Text('Focus on…',
+                style: Theme.of(context).textTheme.titleMedium),
+          ),
+          ListTile(
+            leading: Icon(
+              Icons.not_interested,
+              color: state.activeTaskId.isEmpty
+                  ? Theme.of(context).colorScheme.primary
+                  : null,
+            ),
+            title: const Text('No task'),
+            selected: state.activeTaskId.isEmpty,
+            onTap: () {
+              state.setActiveTask('');
+              Navigator.pop(context);
+            },
+          ),
+          const Divider(height: 1),
+          if (tasks.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('No pending tasks in this workspace.',
+                  style: TextStyle(color: Colors.grey)),
+            )
+          else
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.4,
+              ),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: tasks.length,
+                itemBuilder: (ctx, i) {
+                  final task = tasks[i];
+                  return ListTile(
+                    leading: Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: _quadrantColor(task.urgent, task.important),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    title: Text(task.title),
+                    trailing: task.pomodorosCompleted > 0
+                        ? Text('🍅×${task.pomodorosCompleted}',
+                            style: const TextStyle(fontSize: 12))
+                        : null,
+                    selected: task.uid == state.activeTaskId,
+                    selectedTileColor: Theme.of(context)
+                        .colorScheme
+                        .primaryContainer
+                        .withValues(alpha: 0.3),
+                    onTap: () {
+                      state.setActiveTask(task.uid);
+                      Navigator.pop(context);
+                    },
+                  );
+                },
+              ),
+            ),
+          const SizedBox(height: 8),
+        ],
       ),
     );
   }
@@ -536,6 +688,10 @@ class _TaskTile extends StatelessWidget {
         subtitle: task.description.isNotEmpty
             ? Text(task.description,
                 maxLines: 1, overflow: TextOverflow.ellipsis)
+            : null,
+        trailing: task.pomodorosCompleted > 0
+            ? Text('🍅×${task.pomodorosCompleted}',
+                style: const TextStyle(fontSize: 12, color: Colors.grey))
             : null,
         onLongPress: () => _showEditDialog(context),
       ),

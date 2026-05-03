@@ -16,9 +16,10 @@ PlasmoidItem {
     property string timerMode: "work"
     property int doneCount: 0
     property bool isPaused: false   // true only after an explicit Pause; false after Start/Reset
-    property string timerEndTime:      ""
-    property string timerStartTime:   ""
+    property string timerEndTime:       ""
+    property string timerStartTime:    ""
     property string timerLastModified: ""
+    property string timerActiveTaskId: ""
     property string taskViewMode:      "list"  // "list" | "matrix"
 
     // Tasks grouped by Eisenhower quadrant — recomputed on workspace change.
@@ -86,7 +87,7 @@ PlasmoidItem {
         timerLastModified = timerStartTime
         webdavSync.pushTimerState(root.sessionCount, root.timerMode, true,
                                   root.timerStartTime, root.remainingSeconds,
-                                  0, root.timerLastModified)
+                                  0, root.timerLastModified, root.timerActiveTaskId)
     }
 
     function pauseTimer() {
@@ -150,9 +151,10 @@ PlasmoidItem {
             if (remaining <= 0) return
             root.timerMode    = data.timerMode    || root.timerMode
             root.sessionCount = data.sessionCount !== undefined ? data.sessionCount : root.sessionCount
-            root.timerStartTime   = data.startTime || ""
-            root.timerEndTime     = data.endTime   || ""
-            root.remainingSeconds = remaining
+            root.timerStartTime    = data.startTime    || ""
+            root.timerEndTime      = data.endTime      || ""
+            root.timerActiveTaskId = data.activeTaskId || ""
+            root.remainingSeconds  = remaining
             if (!root.isRunning) {
                 root.isRunning = true
                 root.isPaused  = false

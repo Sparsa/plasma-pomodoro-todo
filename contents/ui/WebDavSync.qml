@@ -38,6 +38,7 @@ Item {
     property string _pendingEndTime:             "" // kept for backward compat
     property int    _pendingRemainingSeconds:    0
     property string _pendingLastModified:        ""
+    property string _pendingActiveTaskId:        ""
 
     signal timerStateReceived(var data)
 
@@ -76,7 +77,7 @@ Item {
     // Push timer state. Called on start/pause/reset/skip/session-complete.
     // When running: startTime = ISO start timestamp, totalDuration = seconds.
     // When stopped: startTime = "", totalDuration = 0, remainingSeconds = paused remaining.
-    function pushTimerState(sessionCount, timerMode, isRunning, startTime, totalDuration, remainingSeconds, lastModified) {
+    function pushTimerState(sessionCount, timerMode, isRunning, startTime, totalDuration, remainingSeconds, lastModified, activeTaskId) {
         if (!plasmoid.configuration.webdavEnabled) return
         _pendingTimerPush          = true
         _pendingSessionCount       = sessionCount
@@ -86,6 +87,7 @@ Item {
         _pendingTotalDuration      = totalDuration    || 0
         _pendingRemainingSeconds   = remainingSeconds || 0
         _pendingLastModified       = lastModified || new Date().toISOString()
+        _pendingActiveTaskId       = activeTaskId || ""
         // Compute endTime for backward compat with old clients that only read endTime.
         _pendingEndTime = (_pendingIsRunning && _pendingStartTime && _pendingTotalDuration)
             ? new Date(new Date(_pendingStartTime).getTime() + _pendingTotalDuration * 1000).toISOString()
@@ -152,6 +154,8 @@ Item {
         }
         if (webdavRoot._pendingEndTime)
             body.endTime = webdavRoot._pendingEndTime
+        if (webdavRoot._pendingActiveTaskId)
+            body.activeTaskId = webdavRoot._pendingActiveTaskId
 
         var xhr = new XMLHttpRequest()
         xhr.open("PUT", timerUrl)

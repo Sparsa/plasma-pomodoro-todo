@@ -12,6 +12,7 @@ class Task {
   final String googleTaskId;
   final bool urgent;
   final bool important;
+  final int pomodorosCompleted;
 
   const Task({
     required this.uid,
@@ -23,6 +24,7 @@ class Task {
     this.googleTaskId = '',
     this.urgent = false,
     this.important = false,
+    this.pomodorosCompleted = 0,
   });
 
   factory Task.fromJson(Map<String, dynamic> j) => Task(
@@ -35,6 +37,7 @@ class Task {
         googleTaskId: j['googleTaskId'] as String? ?? '',
         urgent: j['urgent'] as bool? ?? false,
         important: j['important'] as bool? ?? false,
+        pomodorosCompleted: j['pomodorosCompleted'] as int? ?? 0,
       );
 
   Map<String, dynamic> toJson() => {
@@ -47,6 +50,7 @@ class Task {
         'googleTaskId': googleTaskId,
         'urgent': urgent,
         'important': important,
+        'pomodorosCompleted': pomodorosCompleted,
       };
 
   // Q1 = urgent+important (Do First), Q2 = important (!urgent), Q3 = urgent (!important), Q4 = neither
@@ -67,6 +71,7 @@ class Task {
     String? googleTaskId,
     bool? urgent,
     bool? important,
+    int? pomodorosCompleted,
   }) =>
       Task(
         uid: uid ?? this.uid,
@@ -78,6 +83,7 @@ class Task {
         googleTaskId: googleTaskId ?? this.googleTaskId,
         urgent: urgent ?? this.urgent,
         important: important ?? this.important,
+        pomodorosCompleted: pomodorosCompleted ?? this.pomodorosCompleted,
       );
 }
 
