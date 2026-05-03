@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' show HttpDate;
 import 'package:http/http.dart' as http;
 import '../models/workspace.dart';
 
@@ -101,6 +102,8 @@ class WebDavService {
     required int sessionCount,
     required String timerMode,
     required bool isRunning,
+    String? startTime,
+    int totalDuration = 0,
     String? endTime,
     int remainingSeconds = 0,
     required String lastModified,
@@ -112,6 +115,11 @@ class WebDavService {
       'remainingSeconds': remainingSeconds,
       'lastModified': lastModified,
     };
+    if (isRunning && startTime != null) {
+      body['startTime'] = startTime;
+      body['totalDuration'] = totalDuration;
+    }
+    // endTime kept for backward compat with older clients
     if (endTime != null) body['endTime'] = endTime;
 
     await http
@@ -126,17 +134,35 @@ class WebDavService {
         .timeout(const Duration(seconds: 10));
   }
 
-  // Read timer state written by desktop plasmoid (or other clients).
-  Future<Map<String, dynamic>?> getTimerState() async {
+  // Read timer state. Returns server Date header, file Last-Modified header, and body.
+  // Elapsed = serverDate - fileDate is purely server-clock-relative (no device clock skew).
+  Future<({DateTime? serverDate, DateTime? fileDate, Map<String, dynamic>? data})>
+      getTimerState() async {
     try {
       final response = await http
           .get(Uri.parse(timerUrl), headers: _authHeaders)
           .timeout(const Duration(seconds: 10));
+
+      DateTime? serverDate;
+      DateTime? fileDate;
+      final ds = response.headers['date'];
+      if (ds != null) {
+        try { serverDate = HttpDate.parse(ds); } catch (_) {}
+      }
+      final lm = response.headers['last-modified'];
+      if (lm != null) {
+        try { fileDate = HttpDate.parse(lm); } catch (_) {}
+      }
+
       if (response.statusCode == 200) {
-        return jsonDecode(response.body) as Map<String, dynamic>;
+        return (
+          serverDate: serverDate,
+          fileDate: fileDate,
+          data: jsonDecode(response.body) as Map<String, dynamic>,
+        );
       }
     } catch (_) {}
-    return null;
+    return (serverDate: null, fileDate: null, data: null);
   }
 
   static Duration _retryAfter(Map<String, String> headers) {

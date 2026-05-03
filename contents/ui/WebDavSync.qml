@@ -33,7 +33,9 @@ Item {
     property int    _pendingSessionCount:        0
     property string _pendingTimerMode:           ""
     property bool   _pendingIsRunning:           false
-    property string _pendingEndTime:             ""
+    property string _pendingStartTime:           ""
+    property int    _pendingTotalDuration:       0
+    property string _pendingEndTime:             "" // kept for backward compat
     property int    _pendingRemainingSeconds:    0
     property string _pendingLastModified:        ""
 
@@ -72,17 +74,22 @@ Item {
     }
 
     // Push timer state. Called on start/pause/reset/skip/session-complete.
-    // isRunning, endTime, remainingSeconds, lastModified are optional for
-    // backwards compat — defaults to a session-complete (isRunning: false) push.
-    function pushTimerState(sessionCount, timerMode, isRunning, endTime, remainingSeconds, lastModified) {
+    // When running: startTime = ISO start timestamp, totalDuration = seconds.
+    // When stopped: startTime = "", totalDuration = 0, remainingSeconds = paused remaining.
+    function pushTimerState(sessionCount, timerMode, isRunning, startTime, totalDuration, remainingSeconds, lastModified) {
         if (!plasmoid.configuration.webdavEnabled) return
         _pendingTimerPush          = true
         _pendingSessionCount       = sessionCount
         _pendingTimerMode          = timerMode
         _pendingIsRunning          = isRunning !== undefined ? !!isRunning : false
-        _pendingEndTime            = endTime   || ""
+        _pendingStartTime          = startTime        || ""
+        _pendingTotalDuration      = totalDuration    || 0
         _pendingRemainingSeconds   = remainingSeconds || 0
         _pendingLastModified       = lastModified || new Date().toISOString()
+        // Compute endTime for backward compat with old clients that only read endTime.
+        _pendingEndTime = (_pendingIsRunning && _pendingStartTime && _pendingTotalDuration)
+            ? new Date(new Date(_pendingStartTime).getTime() + _pendingTotalDuration * 1000).toISOString()
+            : ""
         _doPushTimerState()
     }
 
@@ -106,7 +113,16 @@ Item {
         xhr.onreadystatechange = function() {
             if (xhr.readyState !== XMLHttpRequest.DONE) return
             if (xhr.status === 200) {
-                try { webdavRoot.timerStateReceived(JSON.parse(xhr.responseText)) } catch(e) {}
+                try {
+                    var data = JSON.parse(xhr.responseText)
+                    // Inject server-clock timestamps so applyRemoteTimerState can
+                    // compute elapsed = serverDate - fileDate without device clock skew.
+                    var dh = xhr.getResponseHeader("Date")
+                    var lm = xhr.getResponseHeader("Last-Modified")
+                    if (dh) data._serverDate   = new Date(dh).getTime()
+                    if (lm) data._lastModified = new Date(lm).getTime()
+                    webdavRoot.timerStateReceived(data)
+                } catch(e) {}
             }
         }
         xhr.onerror   = function() {}
@@ -129,6 +145,10 @@ Item {
             isRunning:        webdavRoot._pendingIsRunning,
             remainingSeconds: webdavRoot._pendingRemainingSeconds,
             lastModified:     webdavRoot._pendingLastModified
+        }
+        if (webdavRoot._pendingIsRunning && webdavRoot._pendingStartTime) {
+            body.startTime    = webdavRoot._pendingStartTime
+            body.totalDuration = webdavRoot._pendingTotalDuration
         }
         if (webdavRoot._pendingEndTime)
             body.endTime = webdavRoot._pendingEndTime

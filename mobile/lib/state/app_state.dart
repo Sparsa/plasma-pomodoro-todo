@@ -63,7 +63,7 @@ class AppState extends ChangeNotifier {
   Timer? _pomodoroTimer;
   Timer? _pushDebounce;
   Timer? _periodicSync;
-  Timer? _fastPollTimer;
+  Timer? _timerPollTimer;   // 10 s while running, 30 s while idle
   Timer? _rateLimitBackoff;
   bool _syncing = false;
   bool _rateLimited = false;
@@ -71,6 +71,7 @@ class AppState extends ChangeNotifier {
   final _uuid = const Uuid();
   final _rng = Random();
   DateTime? _timerEndTime;
+  int _timerTotalDuration = 0;
 
   // ── Init ───────────────────────────────────────────────────────────────────
   Future<void> init() async {
@@ -96,6 +97,7 @@ class AppState extends ChangeNotifier {
     if (webdavUrl.isNotEmpty && _hasPassword) {
       await sync();
       if (webdavAutoSync) _startPeriodicSync();
+      _restartTimerPoll(active: false); // idle poll — detects remote timer starts
     } else if (webdavUrl.isNotEmpty && !_hasPassword) {
       // URL is configured but password is missing — likely a keystore hiccup
       // after an OS/app update.  Surface a clear message so the user knows
@@ -369,9 +371,10 @@ class AppState extends ChangeNotifier {
     if (isRunning) return;
     isRunning = true;
     isPaused = false;
+    _timerTotalDuration = remainingSeconds;
     _timerEndTime = DateTime.now().add(Duration(seconds: remainingSeconds));
     _timerLastModified = DateTime.now().toUtc().toIso8601String();
-    _startFastPoll();
+    _restartTimerPoll(active: true);
     _pushLiveTimerState();
     NotificationService.showRunning(_timerEndTime!, timerLabel);
     NotificationService.scheduleComplete(_timerEndTime!, timerLabel);
@@ -386,7 +389,7 @@ class AppState extends ChangeNotifier {
     isPaused = true;
     _timerEndTime = null;
     _timerLastModified = DateTime.now().toUtc().toIso8601String();
-    _stopFastPoll();
+    _restartTimerPoll(active: false);
     _pushLiveTimerState();
     NotificationService.cancelAll();
     notifyListeners();
@@ -399,7 +402,7 @@ class AppState extends ChangeNotifier {
     _timerEndTime = null;
     remainingSeconds = timerDuration;
     _timerLastModified = DateTime.now().toUtc().toIso8601String();
-    _stopFastPoll();
+    _restartTimerPoll(active: false);
     _pushLiveTimerState();
     NotificationService.cancelAll();
     notifyListeners();
@@ -416,7 +419,7 @@ class AppState extends ChangeNotifier {
         isPaused = false;
         _advanceMode();
         _timerEndTime = null;
-        _stopFastPoll();
+        _restartTimerPoll(active: false);
         NotificationService.cancelRunning();
         pushTimerState(sessionCount, timerMode);
       } else {
@@ -428,56 +431,75 @@ class AppState extends ChangeNotifier {
     _pollTimerState();
   }
 
-  void _startFastPoll() {
-    _fastPollTimer?.cancel();
+  // active=true  → 10 s poll (keep running timers in sync across devices)
+  // active=false → 30 s poll (detect remote timer starts while local is idle)
+  void _restartTimerPoll({required bool active}) {
+    _timerPollTimer?.cancel();
     if (_webdav == null) return;
-    _fastPollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      _pollTimerState();
-    });
-  }
-
-  void _stopFastPoll() {
-    _fastPollTimer?.cancel();
-    _fastPollTimer = null;
+    _timerPollTimer = Timer.periodic(
+      active ? const Duration(seconds: 10) : const Duration(seconds: 30),
+      (_) => _pollTimerState(),
+    );
   }
 
   Future<void> _pollTimerState() async {
     if (_webdav == null || _rateLimited) return;
     try {
-      final data = await _webdav!.getTimerState();
-      if (data != null) _applyRemoteTimer(data);
+      final result = await _webdav!.getTimerState();
+      if (result.data != null) {
+        _applyRemoteTimer(result.data!, result.serverDate, result.fileDate);
+      }
     } catch (e) {
       if (e is RateLimitException) _applyRateLimit(e.retryAfter);
     }
   }
 
-  void _applyRemoteTimer(Map<String, dynamic> data) {
+  void _applyRemoteTimer(
+    Map<String, dynamic> data,
+    DateTime? serverDate,
+    DateTime? fileDate,
+  ) {
     final remoteModStr = data['lastModified'] as String?;
     if (remoteModStr == null) return;
-    // Ignore if remote is not newer than our last local change.
     if (_timerLastModified.isNotEmpty &&
         remoteModStr.compareTo(_timerLastModified) <= 0) {
       return;
     }
 
     final remoteRunning = data['isRunning'] as bool? ?? false;
-    final remoteEndTimeStr = data['endTime'] as String?;
     final remoteMode = data['timerMode'] as String? ?? 'work';
     final remoteCount = data['sessionCount'] as int? ?? 0;
     final remoteRemaining = data['remainingSeconds'] as int? ?? 0;
+    final remoteTotalDuration = data['totalDuration'] as int?;
+    final remoteEndTimeStr = data['endTime'] as String?;
 
     _timerLastModified = remoteModStr;
 
-    if (remoteRunning && remoteEndTimeStr != null) {
-      final endTime = DateTime.tryParse(remoteEndTimeStr);
-      if (endTime == null) return;
-      final remaining = endTime.difference(DateTime.now()).inSeconds;
+    if (remoteRunning) {
+      int remaining;
+
+      // Primary: elapsed = Date - Last-Modified (both server-clock, no device skew).
+      if (remoteTotalDuration != null &&
+          serverDate != null &&
+          fileDate != null) {
+        final elapsed = serverDate.difference(fileDate).inSeconds;
+        remaining = remoteTotalDuration - elapsed;
+      } else if (remoteEndTimeStr != null) {
+        // Fallback: old format — endTime against local clock.
+        final endTime = DateTime.tryParse(remoteEndTimeStr);
+        if (endTime == null) return;
+        remaining = endTime.difference(DateTime.now()).inSeconds;
+      } else {
+        return;
+      }
+
       if (remaining <= 0) return;
 
       timerMode = remoteMode;
       sessionCount = remoteCount;
       remainingSeconds = remaining;
-      _timerEndTime = endTime;
+      _timerEndTime = DateTime.now().add(Duration(seconds: remaining));
+      _timerTotalDuration = remoteTotalDuration ?? remaining;
 
       if (!isRunning) {
         isRunning = true;
@@ -485,17 +507,16 @@ class AppState extends ChangeNotifier {
         _pomodoroTimer?.cancel();
         _pomodoroTimer =
             Timer.periodic(const Duration(seconds: 1), (_) => _tick());
-        _startFastPoll();
-        NotificationService.showRunning(endTime, timerLabel);
-        NotificationService.scheduleComplete(endTime, timerLabel);
+        _restartTimerPoll(active: true);
+        NotificationService.showRunning(_timerEndTime!, timerLabel);
+        NotificationService.scheduleComplete(_timerEndTime!, timerLabel);
       }
-      // If already running: remainingSeconds is updated above; existing tick continues.
     } else {
       if (isRunning) {
         _pomodoroTimer?.cancel();
         isRunning = false;
         _timerEndTime = null;
-        _stopFastPoll();
+        _restartTimerPoll(active: false);
         NotificationService.cancelAll();
       }
       timerMode = remoteMode;
@@ -515,7 +536,7 @@ class AppState extends ChangeNotifier {
     isPaused = false;
     _timerEndTime = null;
     _timerLastModified = DateTime.now().toUtc().toIso8601String();
-    _stopFastPoll();
+    _restartTimerPoll(active: false);
     NotificationService.cancelAll();
     _advanceMode();
     _pushLiveTimerState();
@@ -533,7 +554,7 @@ class AppState extends ChangeNotifier {
       final completedLabel = timerLabel;
       _advanceMode();
       _timerEndTime = null;
-      _stopFastPoll();
+      _restartTimerPoll(active: false);
       NotificationService.cancelAll();
       NotificationService.showComplete(completedLabel);
       pushTimerState(sessionCount, timerMode); // retried until WebDAV confirms
@@ -580,17 +601,21 @@ class AppState extends ChangeNotifier {
   // Fire-and-forget — used for start/pause/reset/skip (live state changes).
   void _pushLiveTimerState() {
     if (_webdav == null) return;
-    final endTime = _timerEndTime?.toUtc().toIso8601String();
+    final startTime = isRunning ? DateTime.now().toUtc().toIso8601String() : null;
+    final endTime = _timerEndTime?.toUtc().toIso8601String(); // backward compat
     final mod = _timerLastModified;
     final count = sessionCount;
     final mode = timerMode;
     final running = isRunning;
     final remaining = remainingSeconds;
+    final total = _timerTotalDuration;
     _webdav!
         .putTimerState(
           sessionCount: count,
           timerMode: mode,
           isRunning: running,
+          startTime: startTime,
+          totalDuration: total,
           endTime: endTime,
           remainingSeconds: remaining,
           lastModified: mod,
@@ -744,7 +769,7 @@ class AppState extends ChangeNotifier {
     _pomodoroTimer?.cancel();
     _pushDebounce?.cancel();
     _periodicSync?.cancel();
-    _fastPollTimer?.cancel();
+    _timerPollTimer?.cancel();
     _rateLimitBackoff?.cancel();
     _googlePushDebounce?.cancel();
     super.dispose();

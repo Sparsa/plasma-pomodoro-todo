@@ -17,6 +17,7 @@ PlasmoidItem {
     property int doneCount: 0
     property bool isPaused: false   // true only after an explicit Pause; false after Start/Reset
     property string timerEndTime:      ""
+    property string timerStartTime:   ""
     property string timerLastModified: ""
     property string taskViewMode:      "list"  // "list" | "matrix"
 
@@ -80,10 +81,12 @@ PlasmoidItem {
         pomodoroTimer.start()
         isRunning = true
         isPaused  = false
+        timerStartTime    = new Date().toISOString()
         timerEndTime      = new Date(Date.now() + root.remainingSeconds * 1000).toISOString()
-        timerLastModified = new Date().toISOString()
+        timerLastModified = timerStartTime
         webdavSync.pushTimerState(root.sessionCount, root.timerMode, true,
-                                  root.timerEndTime, root.remainingSeconds, root.timerLastModified)
+                                  root.timerStartTime, root.remainingSeconds,
+                                  0, root.timerLastModified)
     }
 
     function pauseTimer() {
@@ -91,9 +94,10 @@ PlasmoidItem {
         isRunning = false
         isPaused  = true
         timerEndTime      = ""
+        timerStartTime    = ""
         timerLastModified = new Date().toISOString()
         webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
-                                  "", root.remainingSeconds, root.timerLastModified)
+                                  "", 0, root.remainingSeconds, root.timerLastModified)
     }
 
     function resetCurrent() {
@@ -102,9 +106,10 @@ PlasmoidItem {
         isPaused  = false
         remainingSeconds  = modeDuration()
         timerEndTime      = ""
+        timerStartTime    = ""
         timerLastModified = new Date().toISOString()
         webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
-                                  "", root.remainingSeconds, root.timerLastModified)
+                                  "", 0, root.remainingSeconds, root.timerLastModified)
     }
 
     function resetAll() {
@@ -115,24 +120,38 @@ PlasmoidItem {
         timerMode         = "work"
         remainingSeconds  = plasmoid.configuration.pomodoroMinutes * 60
         timerEndTime      = ""
+        timerStartTime    = ""
         timerLastModified = new Date().toISOString()
         webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
-                                  "", root.remainingSeconds, root.timerLastModified)
+                                  "", 0, root.remainingSeconds, root.timerLastModified)
     }
 
     // Applies a remote timer state object if its lastModified is newer than ours.
+    // data._serverDate and data._lastModified (ms timestamps) are injected by
+    // pollTimerState() from HTTP response headers — both server-clock so
+    // elapsed = _serverDate - _lastModified is free of device clock skew.
     function applyRemoteTimerState(data) {
         if (!data || !data.lastModified) return
         if (root.timerLastModified && data.lastModified <= root.timerLastModified) return
 
         root.timerLastModified = data.lastModified
 
-        if (data.isRunning && data.endTime) {
-            var remaining = Math.round((new Date(data.endTime).getTime() - Date.now()) / 1000)
+        if (data.isRunning) {
+            var remaining
+            if (data.totalDuration && data._serverDate && data._lastModified) {
+                var elapsedSec = Math.round((data._serverDate - data._lastModified) / 1000)
+                remaining = data.totalDuration - elapsedSec
+            } else if (data.endTime) {
+                // Fallback: old format — endTime against local clock.
+                remaining = Math.round((new Date(data.endTime).getTime() - Date.now()) / 1000)
+            } else {
+                return
+            }
             if (remaining <= 0) return
             root.timerMode    = data.timerMode    || root.timerMode
             root.sessionCount = data.sessionCount !== undefined ? data.sessionCount : root.sessionCount
-            root.timerEndTime = data.endTime
+            root.timerStartTime   = data.startTime || ""
+            root.timerEndTime     = data.endTime   || ""
             root.remainingSeconds = remaining
             if (!root.isRunning) {
                 root.isRunning = true
@@ -143,7 +162,8 @@ PlasmoidItem {
             if (root.isRunning) {
                 pomodoroTimer.stop()
                 root.isRunning = false
-                root.timerEndTime = ""
+                root.timerStartTime = ""
+                root.timerEndTime   = ""
             }
             root.timerMode    = data.timerMode    || root.timerMode
             root.sessionCount = data.sessionCount !== undefined ? data.sessionCount : root.sessionCount
@@ -269,11 +289,12 @@ PlasmoidItem {
             pomodoroTimer.stop()
             root.isRunning = false
             root.isPaused  = false
-            root.timerEndTime = ""
+            root.timerStartTime = ""
+            root.timerEndTime   = ""
             root.advanceMode()
             root.timerLastModified = new Date().toISOString()
             webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
-                                      "", root.remainingSeconds, root.timerLastModified)
+                                      "", 0, root.remainingSeconds, root.timerLastModified)
         })
         plasmoid.action("clearAllTasks").triggered.connect(function() { root.clearAllTasks() })
     }
@@ -312,7 +333,8 @@ PlasmoidItem {
             } else {
                 stop()
                 root.isRunning = false
-                root.timerEndTime = ""
+                root.timerStartTime = ""
+                root.timerEndTime   = ""
                 var msg = root.timerMode === "work"
                           ? i18n("Focus session done! Time for a break.")
                           : i18n("Break over. Back to work!")
@@ -320,7 +342,7 @@ PlasmoidItem {
                 root.advanceMode()
                 root.timerLastModified = new Date().toISOString()
                 webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
-                                          "", root.remainingSeconds, root.timerLastModified)
+                                          "", 0, root.remainingSeconds, root.timerLastModified)
                 if (plasmoid.configuration.autoStartNext) root.startTimer()
             }
         }
@@ -338,17 +360,17 @@ PlasmoidItem {
     // ─── Live timer sync: fast-poll while running, normal interval at rest ────
     Timer {
         id: timerStatePollTimer
-        interval: 10000   // 10 s while running; 60 s while idle
+        interval: 10000   // 10 s while running; 30 s while idle
         repeat: true
         running: plasmoid.configuration.webdavEnabled && plasmoid.configuration.webdavAutoSync
         onTriggered: webdavSync.pollTimerState()
-        onRunningChanged: interval = root.isRunning ? 10000 : 60000
+        onRunningChanged: interval = root.isRunning ? 10000 : 30000
     }
 
     Connections {
         target: root
         function onIsRunningChanged() {
-            timerStatePollTimer.interval = root.isRunning ? 10000 : 60000
+            timerStatePollTimer.interval = root.isRunning ? 10000 : 30000
         }
     }
 
@@ -1006,11 +1028,12 @@ PlasmoidItem {
                         pomodoroTimer.stop()
                         root.isRunning = false
                         root.isPaused  = false
-                        root.timerEndTime = ""
+                        root.timerStartTime = ""
+                        root.timerEndTime   = ""
                         root.advanceMode()
                         root.timerLastModified = new Date().toISOString()
                         webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
-                                                  "", root.remainingSeconds, root.timerLastModified)
+                                                  "", 0, root.remainingSeconds, root.timerLastModified)
                     }
                     QQC2.ToolTip.text: i18n("Skip to next step")
                     QQC2.ToolTip.visible: hovered
