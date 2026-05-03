@@ -37,7 +37,14 @@ jobs:
           cache: true
 
       - run: flutter pub get
-      - run: flutter build apk --release --split-per-abi
+
+      - name: Build APK
+        run: flutter build apk --release --split-per-abi
+        env:
+          ANDROID_KEYSTORE_BASE64:  ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS:        ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD:     ${{ secrets.ANDROID_KEY_PASSWORD }}
 
       - uses: actions/upload-artifact@v5
         with:
