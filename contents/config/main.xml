@@ -92,6 +92,9 @@
     <entry name="webdavSyncInterval" type="Int">
       <default>5</default>
     </entry>
+    <entry name="webdavPassword" type="String">
+      <default></default>
+    </entry>
     <entry name="webdavLastEtag" type="String">
       <default></default>
     </entry>

@@ -156,6 +156,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       body: Column(
         children: [
+          if (state.syncStatus == SyncStatus.error)
+            _SyncErrorBanner(message: state.syncMessage, onRetry: state.sync),
           _TimerCard(state: state),
           if (state.workspaces.length > 1) _WorkspaceTabs(state: state),
           Expanded(
@@ -257,6 +259,39 @@ class _GoogleSyncButton extends StatelessWidget {
       child: IconButton(icon: icon, onPressed: state.syncGoogle),
     );
   }
+}
+
+// ── Sync error banner ─────────────────────────────────────────────────────────
+class _SyncErrorBanner extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+  const _SyncErrorBanner({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+        color: Colors.red.shade50,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Row(children: [
+            const Icon(Icons.cloud_off_outlined,
+                size: 16, color: Colors.redAccent),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message.isNotEmpty ? message : 'WebDAV sync failed',
+                style: const TextStyle(fontSize: 12, color: Colors.redAccent),
+              ),
+            ),
+            TextButton(
+              onPressed: onRetry,
+              style: TextButton.styleFrom(
+                  foregroundColor: Colors.redAccent,
+                  padding: const EdgeInsets.symmetric(horizontal: 8)),
+              child: const Text('Retry', style: TextStyle(fontSize: 12)),
+            ),
+          ]),
+        ),
+      );
 }
 
 // ── Timer card ────────────────────────────────────────────────────────────────

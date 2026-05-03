@@ -39,8 +39,6 @@ Item {
 
     signal timerStateReceived(var data)
 
-    WalletHelper { id: walletHelper }
-
     // Trigger a full sync cycle (pull → merge → push).
     function sync() {
         if (isSyncing) return
@@ -51,21 +49,19 @@ Item {
             syncMessage = i18n("No file URL — open Settings › WebDAV")
             return
         }
+        var password = (plasmoid.configuration.webdavPassword || "").trim()
+        if (!password) {
+            syncStatus  = "error"
+            syncMessage = i18n("No password saved — open Settings › WebDAV")
+            syncComplete(false, syncMessage)
+            return
+        }
 
         isSyncing   = true
         syncStatus  = "syncing"
         syncMessage = i18n("Syncing…")
 
-        walletHelper.readSecret("webdav-password", function(password) {
-            if (!password) {
-                isSyncing   = false
-                syncStatus  = "error"
-                syncMessage = i18n("No password saved — open Settings › WebDAV")
-                syncComplete(false, syncMessage)
-                return
-            }
-            _doSync(url, plasmoid.configuration.webdavUsername, password)
-        })
+        _doSync(url, plasmoid.configuration.webdavUsername, password)
     }
 
     // Debounced push — call from saveTasks() so changes are flushed after 2 s idle.
@@ -94,63 +90,61 @@ Item {
         if (!plasmoid.configuration.webdavEnabled) return
         var url = (plasmoid.configuration.webdavUrl || "").trim()
         if (!url) return
+        var password = (plasmoid.configuration.webdavPassword || "").trim()
+        if (!password) return
         var timerUrl = url.endsWith(".json")
             ? url.slice(0, -5) + "-timer.json"
             : url + "-timer.json"
 
-        walletHelper.readSecret("webdav-password", function(password) {
-            if (!password) return
-            var xhr = new XMLHttpRequest()
-            xhr.open("GET", timerUrl)
-            if (plasmoid.configuration.webdavUsername)
-                xhr.setRequestHeader("Authorization", _authHeader(plasmoid.configuration.webdavUsername, password))
-            xhr.timeout = 10000
-            xhr.onreadystatechange = function() {
-                if (xhr.readyState !== XMLHttpRequest.DONE) return
-                if (xhr.status === 200) {
-                    try { webdavRoot.timerStateReceived(JSON.parse(xhr.responseText)) } catch(e) {}
-                }
+        var xhr = new XMLHttpRequest()
+        xhr.open("GET", timerUrl)
+        if (plasmoid.configuration.webdavUsername)
+            xhr.setRequestHeader("Authorization", _authHeader(plasmoid.configuration.webdavUsername, password))
+        xhr.timeout = 10000
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (xhr.status === 200) {
+                try { webdavRoot.timerStateReceived(JSON.parse(xhr.responseText)) } catch(e) {}
             }
-            xhr.onerror   = function() {}
-            xhr.ontimeout = function() {}
-            xhr.send()
-        })
+        }
+        xhr.onerror   = function() {}
+        xhr.ontimeout = function() {}
+        xhr.send()
     }
 
     function _doPushTimerState() {
         var url = (plasmoid.configuration.webdavUrl || "").trim()
         if (!url) return
+        var password = (plasmoid.configuration.webdavPassword || "").trim()
+        if (!password) return
         var timerUrl = url.endsWith(".json")
             ? url.slice(0, -5) + "-timer.json"
             : url + "-timer.json"
 
-        walletHelper.readSecret("webdav-password", function(password) {
-            if (!password) return
-            var body = {
-                sessionCount:     webdavRoot._pendingSessionCount,
-                timerMode:        webdavRoot._pendingTimerMode,
-                isRunning:        webdavRoot._pendingIsRunning,
-                remainingSeconds: webdavRoot._pendingRemainingSeconds,
-                lastModified:     webdavRoot._pendingLastModified
-            }
-            if (webdavRoot._pendingEndTime)
-                body.endTime = webdavRoot._pendingEndTime
+        var body = {
+            sessionCount:     webdavRoot._pendingSessionCount,
+            timerMode:        webdavRoot._pendingTimerMode,
+            isRunning:        webdavRoot._pendingIsRunning,
+            remainingSeconds: webdavRoot._pendingRemainingSeconds,
+            lastModified:     webdavRoot._pendingLastModified
+        }
+        if (webdavRoot._pendingEndTime)
+            body.endTime = webdavRoot._pendingEndTime
 
-            var xhr = new XMLHttpRequest()
-            xhr.open("PUT", timerUrl)
-            if (plasmoid.configuration.webdavUsername)
-                xhr.setRequestHeader("Authorization", _authHeader(plasmoid.configuration.webdavUsername, password))
-            xhr.setRequestHeader("Content-Type", "application/json; charset=utf-8")
-            xhr.timeout = 10000
-            xhr.onreadystatechange = function() {
-                if (xhr.readyState !== XMLHttpRequest.DONE) return
-                if (xhr.status >= 200 && xhr.status < 300)
-                    webdavRoot._pendingTimerPush = false
-            }
-            xhr.onerror   = function() {}
-            xhr.ontimeout = function() {}
-            xhr.send(JSON.stringify(body))
-        })
+        var xhr = new XMLHttpRequest()
+        xhr.open("PUT", timerUrl)
+        if (plasmoid.configuration.webdavUsername)
+            xhr.setRequestHeader("Authorization", _authHeader(plasmoid.configuration.webdavUsername, password))
+        xhr.setRequestHeader("Content-Type", "application/json; charset=utf-8")
+        xhr.timeout = 10000
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (xhr.status >= 200 && xhr.status < 300)
+                webdavRoot._pendingTimerPush = false
+        }
+        xhr.onerror   = function() {}
+        xhr.ontimeout = function() {}
+        xhr.send(JSON.stringify(body))
     }
 
     // One-shot connectivity check — used by ConfigWebDav.

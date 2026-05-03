@@ -10,19 +10,16 @@ Item {
     property bool   cfg_webdavEnabled:      plasmoid.configuration.webdavEnabled
     property string cfg_webdavUrl:          plasmoid.configuration.webdavUrl
     property string cfg_webdavUsername:     plasmoid.configuration.webdavUsername
+    property string cfg_webdavPassword:     plasmoid.configuration.webdavPassword
     property bool   cfg_webdavAutoSync:     plasmoid.configuration.webdavAutoSync
     property int    cfg_webdavSyncInterval: plasmoid.configuration.webdavSyncInterval
 
-    property string passwordInput: ""
-    property bool   hasPassword:   false
-    property bool   passwordSaved: false
-    property string testMessage:   ""
-    property bool   isTesting:     false
-    property bool   testOk:        false
+    property bool   obscurePass:  true
+    property string testMessage:  ""
+    property bool   isTesting:    false
+    property bool   testOk:       false
 
     implicitHeight: form.implicitHeight + Kirigami.Units.largeSpacing * 2
-
-    WalletHelper { id: configWallet }
 
     WebDavSync {
         id: configWebDavSync
@@ -30,32 +27,8 @@ Item {
         onSyncComplete: {}
     }
 
-    Component.onCompleted: {
-        configWallet.hasEntry("webdav-password", function(has) {
-            configPage.hasPassword = has
-        })
-    }
-
-    function savePassword() {
-        var pass = configPage.passwordInput.trim()
-        if (!pass) return
-        configWallet.writeSecret("webdav-password", pass, function() {
-            configPage.hasPassword   = true
-            configPage.passwordSaved = true
-            configPage.passwordInput = ""
-        })
-    }
-
-    function clearPassword() {
-        configWallet.clearSecret("webdav-password", function() {
-            configPage.hasPassword   = false
-            configPage.passwordSaved = false
-        })
-    }
-
     function runTestConnection() {
-        var url  = configPage.cfg_webdavUrl.trim()
-        var user = configPage.cfg_webdavUsername.trim()
+        var url = configPage.cfg_webdavUrl.trim()
         if (!url) {
             configPage.testMessage = i18n("Enter a file URL first.")
             configPage.testOk      = false
@@ -65,14 +38,16 @@ Item {
         configPage.testMessage = ""
         configPage.testOk      = false
 
-        configWallet.readSecret("webdav-password", function(password) {
-            var pass = password || configPage.passwordInput.trim()
-            configWebDavSync.testConnection(url, user, pass, function(ok, msg) {
+        configWebDavSync.testConnection(
+            url,
+            configPage.cfg_webdavUsername.trim(),
+            configPage.cfg_webdavPassword,
+            function(ok, msg) {
                 configPage.isTesting   = false
                 configPage.testOk      = ok
                 configPage.testMessage = msg
-            })
-        })
+            }
+        )
     }
 
     // ── Form ─────────────────────────────────────────────────────────────────
@@ -106,7 +81,7 @@ Item {
 
         QQC2.Label {
             Layout.fillWidth: true
-            text: i18n("Full URL to the JSON file on your WebDAV server.\nNextcloud example: https://cloud.example.com/remote.php/dav/files/user/pomodoro-tasks.json")
+            text: i18n("Full URL to the JSON file on your WebDAV server.\nNextcloud: https://cloud.example.com/remote.php/dav/files/user/pomodoro-tasks.json")
             wrapMode: Text.WordWrap
             opacity: 0.7
             font.pointSize: Kirigami.Theme.smallFont.pointSize
@@ -119,59 +94,22 @@ Item {
             onTextChanged: cfg_webdavUsername = text
         }
 
-        // ── Password ──────────────────────────────────────────────────────
-        Kirigami.Separator {
-            Kirigami.FormData.isSection: true
-            Kirigami.FormData.label: i18n("Password")
-        }
-
         RowLayout {
             Kirigami.FormData.label: i18n("Password:")
             spacing: Kirigami.Units.smallSpacing
 
             QQC2.TextField {
-                id: passwordField
                 Layout.minimumWidth: Kirigami.Units.gridUnit * 16
-                echoMode: showPassCheck.checked ? TextInput.Normal : TextInput.Password
-                placeholderText: configPage.hasPassword ? i18n("(saved — enter new to replace)") : i18n("Enter password")
-                text: configPage.passwordInput
-                onTextChanged: {
-                    configPage.passwordInput = text
-                    configPage.passwordSaved = false
-                }
+                echoMode: configPage.obscurePass ? TextInput.Password : TextInput.Normal
+                placeholderText: i18n("Enter password")
+                text: cfg_webdavPassword
+                onTextChanged: cfg_webdavPassword = text
             }
 
             QQC2.CheckBox {
-                id: showPassCheck
                 text: i18n("Show")
+                onToggled: configPage.obscurePass = !checked
             }
-        }
-
-        RowLayout {
-            Kirigami.FormData.label: " "
-            spacing: Kirigami.Units.smallSpacing
-
-            QQC2.Button {
-                text: i18n("Save to Wallet")
-                enabled: configPage.passwordInput.trim().length > 0
-                onClicked: configPage.savePassword()
-            }
-
-            QQC2.Button {
-                text: i18n("Remove from Wallet")
-                enabled: configPage.hasPassword
-                onClicked: configPage.clearPassword()
-            }
-        }
-
-        QQC2.Label {
-            text: configPage.passwordSaved
-                ? i18n("Password saved to KWallet.")
-                : configPage.hasPassword
-                    ? i18n("A password is stored in KWallet.")
-                    : i18n("No password stored.")
-            opacity: 0.7
-            font.pointSize: Kirigami.Theme.smallFont.pointSize
         }
 
         // ── Test connection ───────────────────────────────────────────────

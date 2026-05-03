@@ -709,6 +709,9 @@ class AppState extends ChangeNotifier {
     if (autoSync && url.isNotEmpty && _hasPassword) _startPeriodicSync();
 
     notifyListeners();
+
+    // Kick off an immediate sync so the user sees results right after saving.
+    if (_webdav != null) sync().ignore();
   }
 
   @override
