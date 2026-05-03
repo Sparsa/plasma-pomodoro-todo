@@ -3,7 +3,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // Thin wrapper so screens never touch storage keys directly.
 class SettingsService {
-  static const _store = FlutterSecureStorage();
+  // Explicit options so behaviour is consistent across app updates:
+  //   Android — EncryptedSharedPreferences (survives OS + signing-key updates);
+  //             resetOnError:false means a keystore hiccup returns null instead
+  //             of silently wiping all stored secrets.
+  //   iOS     — first_unlock so background timer / notification callbacks can
+  //             read secrets after a device reboot without user interaction.
+  static const _store = FlutterSecureStorage(
+    aOptions: AndroidOptions(
+      resetOnError: false,
+    ),
+    iOptions: IOSOptions(
+      accessibility: KeychainAccessibility.first_unlock,
+    ),
+  );
+
   static const _kPassword = 'webdav_password';
   static const _kGoogleAccessToken = 'google_access_token';
   static const _kGoogleRefreshToken = 'google_refresh_token';

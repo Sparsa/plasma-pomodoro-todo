@@ -63,7 +63,9 @@ class AppState extends ChangeNotifier {
   Timer? _pushDebounce;
   Timer? _periodicSync;
   Timer? _fastPollTimer;
+  Timer? _rateLimitBackoff;
   bool _syncing = false;
+  bool _rateLimited = false;
   WebDavService? _webdav;
   final _uuid = const Uuid();
   DateTime? _timerEndTime;
@@ -92,6 +94,12 @@ class AppState extends ChangeNotifier {
     if (webdavUrl.isNotEmpty && _hasPassword) {
       await sync();
       if (webdavAutoSync) _startPeriodicSync();
+    } else if (webdavUrl.isNotEmpty && !_hasPassword) {
+      // URL is configured but password is missing — likely a keystore hiccup
+      // after an OS/app update.  Surface a clear message so the user knows
+      // to re-enter their password in Settings rather than seeing silent failures.
+      syncStatus = SyncStatus.error;
+      syncMessage = 'WebDAV password missing — please re-enter it in Settings';
     }
 
     googleClientId = await SettingsService.getGoogleClientId();
@@ -121,7 +129,7 @@ class AppState extends ChangeNotifier {
 
   // ── Sync ───────────────────────────────────────────────────────────────────
   Future<void> sync() async {
-    if (_syncing || _webdav == null) return;
+    if (_syncing || _webdav == null || _rateLimited) return;
     _syncing = true;
     syncStatus = SyncStatus.syncing;
     syncMessage = 'Syncing…';
@@ -176,14 +184,26 @@ class AppState extends ChangeNotifier {
       syncMessage = 'Synced';
 
       if (_pendingTimerPush) _doPushTimerState();
-      _pollTimerState().ignore();
     } catch (e) {
+      if (e is RateLimitException) {
+        _applyRateLimit(e.retryAfter);
+        syncMessage = e.toString();
+      } else {
+        syncMessage = e.toString().replaceFirst('Exception: ', '');
+      }
       syncStatus = SyncStatus.error;
-      syncMessage = e.toString().replaceFirst('Exception: ', '');
     } finally {
       _syncing = false;
       notifyListeners();
     }
+  }
+
+  void _applyRateLimit(Duration backoff) {
+    _rateLimited = true;
+    _rateLimitBackoff?.cancel();
+    _rateLimitBackoff = Timer(backoff, () {
+      _rateLimited = false;
+    });
   }
 
   void schedulePush() {
@@ -408,7 +428,7 @@ class AppState extends ChangeNotifier {
   void _startFastPoll() {
     _fastPollTimer?.cancel();
     if (_webdav == null) return;
-    _fastPollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+    _fastPollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       _pollTimerState();
     });
   }
@@ -419,11 +439,13 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _pollTimerState() async {
-    if (_webdav == null) return;
+    if (_webdav == null || _rateLimited) return;
     try {
       final data = await _webdav!.getTimerState();
       if (data != null) _applyRemoteTimer(data);
-    } catch (_) {}
+    } catch (e) {
+      if (e is RateLimitException) _applyRateLimit(e.retryAfter);
+    }
   }
 
   void _applyRemoteTimer(Map<String, dynamic> data) {
@@ -720,6 +742,7 @@ class AppState extends ChangeNotifier {
     _pushDebounce?.cancel();
     _periodicSync?.cancel();
     _fastPollTimer?.cancel();
+    _rateLimitBackoff?.cancel();
     _googlePushDebounce?.cancel();
     super.dispose();
   }

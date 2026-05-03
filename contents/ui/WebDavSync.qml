@@ -47,8 +47,10 @@ Item {
         if (!url) {
             syncStatus  = "error"
             syncMessage = i18n("No file URL — open Settings › WebDAV")
+            syncComplete(false, syncMessage)
             return
         }
+        var username = (plasmoid.configuration.webdavUsername || "").trim()
         var password = (plasmoid.configuration.webdavPassword || "").trim()
         if (!password) {
             syncStatus  = "error"
@@ -61,7 +63,7 @@ Item {
         syncStatus  = "syncing"
         syncMessage = i18n("Syncing…")
 
-        _doSync(url, plasmoid.configuration.webdavUsername, password)
+        _doSync(url, username, password)
     }
 
     // Debounced push — call from saveTasks() so changes are flushed after 2 s idle.
@@ -219,8 +221,8 @@ Item {
                             copy.webdavSyncedUids = (copy.tasks || []).map(function(t) { return t.uid }).filter(Boolean)
                             return copy
                         })
-                        _put(url, username, password, merged2, etag2, function(ok3, etag3) {
-                            _finish(ok3, etag3, merged2)
+                        _put(url, username, password, merged2, etag2, function(ok3, etagOrMsg3) {
+                            _finish(ok3, etagOrMsg3, merged2)
                         })
                     })
                     return
@@ -230,9 +232,10 @@ Item {
         })
     }
 
-    function _finish(ok, etag, data) {
+    // etagOrMsg: ETag string on success, error message string on failure.
+    function _finish(ok, etagOrMsg, data) {
         if (ok) {
-            if (etag) plasmoid.configuration.webdavLastEtag = etag
+            if (etagOrMsg) plasmoid.configuration.webdavLastEtag = etagOrMsg
             webdavRoot._lastSyncData = data
             syncStatus  = "ok"
             syncMessage = i18n("Synced")
@@ -240,7 +243,9 @@ Item {
             pollTimerState()
         } else {
             syncStatus  = "error"
-            syncMessage = i18n("Upload failed — check server permissions")
+            syncMessage = (typeof etagOrMsg === "string" && etagOrMsg)
+                ? etagOrMsg
+                : i18n("Upload failed — check server permissions")
         }
         isSyncing = false
         syncComplete(ok, syncMessage)
@@ -301,12 +306,16 @@ Item {
                 callback(false, "", true)
             } else if (xhr.status >= 200 && xhr.status < 300) {
                 callback(true, xhr.getResponseHeader("ETag") || "", false)
+            } else if (xhr.status === 401 || xhr.status === 403) {
+                callback(false, i18n("Authentication failed — check credentials in Settings › WebDAV"), false)
+            } else if (xhr.status === 0) {
+                callback(false, i18n("Network error — check URL and server address"), false)
             } else {
-                callback(false, "", false)
+                callback(false, i18n("Upload failed (HTTP %1)", xhr.status), false)
             }
         }
-        xhr.ontimeout = function() { callback(false, "", false) }
-        xhr.onerror   = function() { callback(false, "", false) }
+        xhr.ontimeout = function() { callback(false, i18n("Network timeout"), false) }
+        xhr.onerror   = function() { callback(false, i18n("Network error — check URL and server address"), false) }
         xhr.send(JSON.stringify(data))
     }
 
@@ -400,9 +409,35 @@ Item {
     // ── Private: auth ──────────────────────────────────────────────────────────
 
     function _authHeader(username, password) {
-        // btoa is available as a global in Qt 6's QML JS engine.
-        // unescape+encodeURIComponent handles non-ASCII passwords correctly.
-        return "Basic " + btoa(unescape(encodeURIComponent(username + ":" + password)))
+        // Pure-JS UTF-8 base64 — avoids relying on btoa() which is not guaranteed
+        // in all QML/Qt versions and can silently break with non-ASCII characters.
+        var str = username + ":" + password
+        var bytes = []
+        for (var i = 0; i < str.length; i++) {
+            var c = str.charCodeAt(i)
+            if (c < 0x80) {
+                bytes.push(c)
+            } else if (c < 0x800) {
+                bytes.push(0xC0 | (c >> 6))
+                bytes.push(0x80 | (c & 0x3F))
+            } else {
+                bytes.push(0xE0 | (c >> 12))
+                bytes.push(0x80 | ((c >> 6) & 0x3F))
+                bytes.push(0x80 | (c & 0x3F))
+            }
+        }
+        var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        var b64 = ""
+        for (var j = 0; j < bytes.length; j += 3) {
+            var b0 = bytes[j]
+            var b1 = j + 1 < bytes.length ? bytes[j + 1] : 0
+            var b2 = j + 2 < bytes.length ? bytes[j + 2] : 0
+            b64 += chars[b0 >> 2]
+            b64 += chars[((b0 & 3) << 4) | (b1 >> 4)]
+            b64 += j + 1 < bytes.length ? chars[((b1 & 0xF) << 2) | (b2 >> 6)] : "="
+            b64 += j + 2 < bytes.length ? chars[b2 & 0x3F] : "="
+        }
+        return "Basic " + b64
     }
 
     // ── Timers ─────────────────────────────────────────────────────────────────
