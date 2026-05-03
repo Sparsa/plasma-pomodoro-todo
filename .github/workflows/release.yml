@@ -44,6 +44,11 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS:         ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret not set — APK will be debug-signed."
+            exit 0
+          fi
+
           # Decode the base64 secret to a raw keystore file.
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > /tmp/raw_keystore.jks
 
