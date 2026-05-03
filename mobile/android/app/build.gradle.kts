@@ -1,5 +1,3 @@
-import java.util.Base64
-
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -32,24 +30,22 @@ android {
 
     signingConfigs {
         create("release") {
-            val b64 = System.getenv("ANDROID_KEYSTORE_BASE64")
-            if (b64 != null) {
-                val ksFile = layout.buildDirectory.file("keystore.jks").get().asFile
-                ksFile.parentFile.mkdirs()
-                ksFile.writeBytes(Base64.getDecoder().decode(b64))
-                storeFile = ksFile
+            // ANDROID_KEYSTORE_PATH is written by the CI workflow step that decodes
+            // and converts the keystore to JKS before Gradle runs.
+            val ksPath = System.getenv("ANDROID_KEYSTORE_PATH")
+            if (ksPath != null) {
+                storeFile    = File(ksPath)
                 storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
-                keyAlias    = System.getenv("ANDROID_KEY_ALIAS")
-                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+                keyAlias      = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword   = System.getenv("ANDROID_KEY_PASSWORD")
             }
         }
     }
 
     buildTypes {
         release {
-            // Use the release keystore when secrets are available (CI).
-            // Fall back to debug signing for local `flutter run --release`.
-            signingConfig = if (System.getenv("ANDROID_KEYSTORE_BASE64") != null)
+            // Use the consistent release keystore in CI; fall back to debug signing locally.
+            signingConfig = if (System.getenv("ANDROID_KEYSTORE_PATH") != null)
                 signingConfigs.getByName("release")
             else
                 signingConfigs.getByName("debug")

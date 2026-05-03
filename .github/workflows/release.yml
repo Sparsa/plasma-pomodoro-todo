@@ -38,13 +38,36 @@ jobs:
 
       - run: flutter pub get
 
+      - name: Prepare signing keystore
+        env:
+          ANDROID_KEYSTORE_BASE64:   ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS:         ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          # Decode the base64 secret to a raw keystore file.
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > /tmp/raw_keystore.jks
+
+          # Convert to legacy JKS format so AGP's Bouncy Castle can parse it.
+          # Java 17+ defaults to PKCS12, which produces ASN.1 tags >30 that
+          # older Bouncy Castle (bundled with AGP) cannot read.
+          keytool -importkeystore \
+            -srckeystore  /tmp/raw_keystore.jks \
+            -srcstorepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -srcalias     "$ANDROID_KEY_ALIAS" \
+            -destkeystore /tmp/release.jks \
+            -deststoretype JKS \
+            -deststorepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -destalias    "$ANDROID_KEY_ALIAS" \
+            -noprompt
+
+          echo "ANDROID_KEYSTORE_PATH=/tmp/release.jks" >> "$GITHUB_ENV"
+
       - name: Build APK
         run: flutter build apk --release --split-per-abi
         env:
-          ANDROID_KEYSTORE_BASE64:  ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS:        ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD:     ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS:         ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD:      ${{ secrets.ANDROID_KEY_PASSWORD }}
 
       - uses: actions/upload-artifact@v5
         with:
