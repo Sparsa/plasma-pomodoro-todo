@@ -79,6 +79,7 @@ PlasmoidItem {
     }
 
     function startTimer() {
+        idleBreakTimer.stop()
         pomodoroTimer.start()
         isRunning = true
         isPaused  = false
@@ -102,6 +103,7 @@ PlasmoidItem {
     }
 
     function resetCurrent() {
+        idleBreakTimer.stop()
         pomodoroTimer.stop()
         isRunning = false
         isPaused  = false
@@ -114,6 +116,7 @@ PlasmoidItem {
     }
 
     function resetAll() {
+        idleBreakTimer.stop()
         pomodoroTimer.stop()
         isRunning = false
         isPaused  = false
@@ -172,6 +175,7 @@ PlasmoidItem {
             var rem = data.remainingSeconds || 0
             root.remainingSeconds = rem > 0 ? rem : root.modeDuration()
             root.isPaused = rem > 0 && rem < root.modeDuration()
+            root.scheduleIdleBreakExpiry()
         }
     }
 
@@ -183,6 +187,13 @@ PlasmoidItem {
             timerMode = "work"
         }
         remainingSeconds = modeDuration()
+    }
+
+    function scheduleIdleBreakExpiry() {
+        idleBreakTimer.stop()
+        if (root.timerMode === "work" || root.isRunning) return
+        idleBreakTimer.interval = root.modeDuration() * 1000
+        idleBreakTimer.start()
     }
 
     function currentIcon() {
@@ -294,6 +305,7 @@ PlasmoidItem {
             root.timerStartTime = ""
             root.timerEndTime   = ""
             root.advanceMode()
+            root.scheduleIdleBreakExpiry()
             root.timerLastModified = new Date().toISOString()
             webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
                                       "", 0, root.remainingSeconds, root.timerLastModified)
@@ -325,6 +337,22 @@ PlasmoidItem {
         }
     }
 
+    // Fires after an untaken break elapses in real time → auto-advance to work.
+    Timer {
+        id: idleBreakTimer
+        repeat: false
+        onTriggered: {
+            if (root.isRunning || root.timerMode === "work") return
+            root.advanceMode()
+            root.timerStartTime    = ""
+            root.timerEndTime      = ""
+            root.timerLastModified = new Date().toISOString()
+            webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
+                                      "", 0, root.remainingSeconds,
+                                      root.timerLastModified, root.timerActiveTaskId)
+        }
+    }
+
     Timer {
         id: pomodoroTimer
         interval: 1000
@@ -342,6 +370,7 @@ PlasmoidItem {
                           : i18n("Break over. Back to work!")
                 root.sendNotification("Pomodoro", msg)
                 root.advanceMode()
+                root.scheduleIdleBreakExpiry()
                 root.timerLastModified = new Date().toISOString()
                 webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
                                           "", 0, root.remainingSeconds, root.timerLastModified)
@@ -1033,6 +1062,7 @@ PlasmoidItem {
                         root.timerStartTime = ""
                         root.timerEndTime   = ""
                         root.advanceMode()
+                        root.scheduleIdleBreakExpiry()
                         root.timerLastModified = new Date().toISOString()
                         webdavSync.pushTimerState(root.sessionCount, root.timerMode, false,
                                                   "", 0, root.remainingSeconds, root.timerLastModified)

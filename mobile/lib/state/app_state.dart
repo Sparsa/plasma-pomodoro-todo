@@ -66,6 +66,7 @@ class AppState extends ChangeNotifier {
   Timer? _periodicSync;
   Timer? _timerPollTimer;   // 10 s while running, 30 s while idle
   Timer? _rateLimitBackoff;
+  Timer? _idleBreakTimer;   // fires if break is never started
   bool _syncing = false;
   bool _rateLimited = false;
   WebDavService? _webdav;
@@ -386,6 +387,7 @@ class AppState extends ChangeNotifier {
 
   void startTimer() {
     if (isRunning) return;
+    _idleBreakTimer?.cancel();
     isRunning = true;
     isPaused = false;
     _timerTotalDuration = remainingSeconds;
@@ -401,6 +403,7 @@ class AppState extends ChangeNotifier {
   }
 
   void pauseTimer() {
+    _idleBreakTimer?.cancel();
     _pomodoroTimer?.cancel();
     isRunning = false;
     isPaused = true;
@@ -413,6 +416,7 @@ class AppState extends ChangeNotifier {
   }
 
   void resetTimer() {
+    _idleBreakTimer?.cancel();
     _pomodoroTimer?.cancel();
     isRunning = false;
     isPaused = false;
@@ -549,12 +553,28 @@ class AppState extends ChangeNotifier {
       remainingSeconds =
           (remoteRemaining > 0 && remoteRemaining < dur) ? remoteRemaining : dur;
       isPaused = remainingSeconds < dur;
+      _scheduleIdleBreakExpiry();
     }
 
     notifyListeners();
   }
 
+  // If a break mode is entered while idle, auto-advance to work after the
+  // break duration elapses so an untaken rest doesn't block the next session.
+  void _scheduleIdleBreakExpiry() {
+    _idleBreakTimer?.cancel();
+    if (timerMode == 'work' || isRunning) return;
+    _idleBreakTimer = Timer(Duration(seconds: timerDuration), () {
+      if (isRunning || timerMode == 'work') return;
+      _advanceMode();
+      _timerLastModified = DateTime.now().toUtc().toIso8601String();
+      _pushLiveTimerState();
+      notifyListeners();
+    });
+  }
+
   void skipMode() {
+    _idleBreakTimer?.cancel();
     _pomodoroTimer?.cancel();
     isRunning = false;
     isPaused = false;
@@ -563,6 +583,7 @@ class AppState extends ChangeNotifier {
     _restartTimerPoll(active: false);
     NotificationService.cancelAll();
     _advanceMode();
+    _scheduleIdleBreakExpiry();
     _pushLiveTimerState();
     notifyListeners();
   }
@@ -581,6 +602,7 @@ class AppState extends ChangeNotifier {
       if (wasWork && activeTaskId.isNotEmpty) {
         _incrementPomodoroCount(activeTaskId);
       }
+      _scheduleIdleBreakExpiry();
       _timerEndTime = null;
       _restartTimerPoll(active: false);
       NotificationService.cancelAll();
@@ -813,6 +835,7 @@ class AppState extends ChangeNotifier {
     _periodicSync?.cancel();
     _timerPollTimer?.cancel();
     _rateLimitBackoff?.cancel();
+    _idleBreakTimer?.cancel();
     _googlePushDebounce?.cancel();
     super.dispose();
   }
