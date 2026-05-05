@@ -4,8 +4,15 @@ import QtQuick.Controls as QQC2
 import org.kde.plasma.components as PlasmaComponents3
 import org.kde.kirigami as Kirigami
 
-Item {
+Rectangle {
     id: root
+
+    color: isActivePomodoro
+        ? Qt.rgba(Kirigami.Theme.highlightColor.r,
+                  Kirigami.Theme.highlightColor.g,
+                  Kirigami.Theme.highlightColor.b, 0.10)
+        : "transparent"
+    radius: Kirigami.Units.smallSpacing
 
     property string taskTitle: ""
     property string taskDescription: ""
@@ -15,8 +22,10 @@ Item {
     property bool taskUrgent:    false
     property bool taskImportant: false
 
-    property bool editing: false
-    property bool editingDesc: false
+    property bool   editing: false
+    property bool   editingDesc: false
+    property string taskUid: ""
+    property bool   isActivePomodoro: false
 
     signal toggleDone()
     signal toggleExpanded()
@@ -28,6 +37,7 @@ Item {
     signal editingEnded()
     signal urgentToggled()
     signal importantToggled()
+    signal pomodoroToggled()
 
     readonly property color quadrantColor: {
         if (taskUrgent && taskImportant) return "#e74c3c"
@@ -350,7 +360,7 @@ Item {
                 elide: Text.ElideRight
                 opacity: taskDone ? 0.45 : 1.0
                 font.strikeout: taskDone
-                TapHandler { onTapped: root.toggleExpanded() }
+                TapHandler { onTapped: root.pomodoroToggled() }
                 HoverHandler { cursorShape: Qt.PointingHandCursor }
             }
 

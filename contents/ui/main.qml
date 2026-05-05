@@ -22,6 +22,17 @@ PlasmoidItem {
     property string timerActiveTaskId: ""
     property string taskViewMode:      "list"  // "list" | "matrix"
 
+    readonly property string activeTaskTitle: {
+        if (!root.timerActiveTaskId) return ""
+        var ws = root.workspacesData[root.currentWorkspace]
+        if (!ws) return ""
+        var tasks = ws.tasks || []
+        for (var i = 0; i < tasks.length; i++) {
+            if (tasks[i].uid === root.timerActiveTaskId) return tasks[i].title
+        }
+        return ""
+    }
+
     // Tasks grouped by Eisenhower quadrant — recomputed on workspace change.
     readonly property var quadrantTasks: {
         var ws = root.workspacesData[root.currentWorkspace]
@@ -1032,6 +1043,17 @@ PlasmoidItem {
                 }
             }
 
+            PlasmaComponents3.Label {
+                Layout.fillWidth: true
+                Layout.topMargin: Kirigami.Units.smallSpacing / 2
+                horizontalAlignment: Text.AlignHCenter
+                visible: root.activeTaskTitle.length > 0
+                text: "🍅 " + root.activeTaskTitle
+                font.pixelSize: Kirigami.Units.gridUnit * 0.85
+                opacity: 0.75
+                elide: Text.ElideRight
+            }
+
             RowLayout {
                 Layout.alignment: Qt.AlignHCenter
                 spacing: Kirigami.Units.smallSpacing
@@ -1533,6 +1555,8 @@ PlasmoidItem {
                         taskReminder:    model.reminder   || ""
                         taskUrgent:      model.urgent     || false
                         taskImportant:   model.important  || false
+                        taskUid:         model.uid        || ""
+                        isActivePomodoro: model.uid !== "" && model.uid === root.timerActiveTaskId
 
                         // Auto-focus description on newly added tasks when config enabled
                         Component.onCompleted: {
@@ -1575,6 +1599,16 @@ PlasmoidItem {
                         onImportantToggled: {
                             taskModel.setProperty(index, "important", !model.important)
                             root.saveTasks()
+                        }
+                        onPomodoroToggled: {
+                            root.timerActiveTaskId = (model.uid === root.timerActiveTaskId) ? "" : model.uid
+                            root.timerLastModified = new Date().toISOString()
+                            if (root.isRunning) root.timerStartTime = root.timerLastModified
+                            webdavSync.pushTimerState(root.sessionCount, root.timerMode, root.isRunning,
+                                                      root.isRunning ? root.timerStartTime : "",
+                                                      root.isRunning ? root.remainingSeconds : 0,
+                                                      root.isRunning ? 0 : root.remainingSeconds,
+                                                      root.timerLastModified, root.timerActiveTaskId)
                         }
                         onEditingStarted: root.activeEdits++
                         onEditingEnded:   root.activeEdits = Math.max(0, root.activeEdits - 1)

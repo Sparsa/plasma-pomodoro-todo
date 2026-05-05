@@ -335,6 +335,7 @@ class AppState extends ChangeNotifier {
   Future<void> setActiveTask(String uid) async {
     activeTaskId = uid;
     await SettingsService.saveActiveTaskId(uid);
+    _pushLiveTimerState();
     notifyListeners();
   }
 
