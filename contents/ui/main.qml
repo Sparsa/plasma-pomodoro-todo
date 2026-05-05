@@ -1691,29 +1691,61 @@ PlasmoidItem {
                                 Column {
                                     width: parent.width
                                     Repeater {
-                                        model: parent.parent.parent.parent.qTasks
-                                        delegate: RowLayout {
+                                        // modelData here is the outer quadrant config {label,sub,color,qi}
+                                        model: root.quadrantTasks[modelData.qi] || []
+                                        delegate: Item {
                                             width: parent.width
-                                            spacing: 0
-                                            PlasmaComponents3.CheckBox {
-                                                checked: modelData.done
-                                                onToggled: root.matrixToggleDone(modelData.uid)
+                                            implicitHeight: matRow.implicitHeight
+
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                radius: 3
+                                                color: !modelData.done && modelData.uid === root.timerActiveTaskId
+                                                    ? Qt.rgba(0.91, 0.30, 0.24, 0.15)
+                                                    : "transparent"
                                             }
-                                            PlasmaComponents3.Label {
-                                                Layout.fillWidth: true
-                                                text: modelData.title
-                                                elide: Text.ElideRight
-                                                opacity: modelData.done ? 0.45 : 1.0
-                                                font.strikeout: modelData.done
-                                                font.pixelSize: Kirigami.Units.gridUnit * 0.85
-                                                wrapMode: Text.WordWrap
-                                                maximumLineCount: 2
-                                                Layout.rightMargin: Kirigami.Units.smallSpacing
+
+                                            RowLayout {
+                                                id: matRow
+                                                width: parent.width
+                                                spacing: 0
+                                                PlasmaComponents3.CheckBox {
+                                                    checked: modelData.done
+                                                    onToggled: root.matrixToggleDone(modelData.uid)
+                                                }
+                                                PlasmaComponents3.Label {
+                                                    Layout.fillWidth: true
+                                                    text: modelData.title
+                                                    elide: Text.ElideRight
+                                                    opacity: modelData.done ? 0.45 : 1.0
+                                                    font.strikeout: modelData.done
+                                                    font.pixelSize: Kirigami.Units.gridUnit * 0.85
+                                                    wrapMode: Text.WordWrap
+                                                    maximumLineCount: 2
+                                                    Layout.rightMargin: Kirigami.Units.smallSpacing
+                                                    TapHandler {
+                                                        enabled: !modelData.done
+                                                        onTapped: {
+                                                            root.timerActiveTaskId = (modelData.uid === root.timerActiveTaskId) ? "" : modelData.uid
+                                                            root.timerLastModified = new Date().toISOString()
+                                                            if (root.isRunning) root.timerStartTime = root.timerLastModified
+                                                            webdavSync.pushTimerState(
+                                                                root.sessionCount, root.timerMode, root.isRunning,
+                                                                root.isRunning ? root.timerStartTime : "",
+                                                                root.isRunning ? root.remainingSeconds : 0,
+                                                                root.isRunning ? 0 : root.remainingSeconds,
+                                                                root.timerLastModified, root.timerActiveTaskId)
+                                                        }
+                                                    }
+                                                    HoverHandler {
+                                                        cursorShape: modelData.done ? Qt.ArrowCursor : Qt.PointingHandCursor
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                     PlasmaComponents3.Label {
-                                        visible: parent.parent.parent.parent.parent.parent.qTasks.length === 0
+                                        visible: (root.quadrantTasks[modelData.qi] || []).length === 0
                                         width: parent.width
                                         text: i18n("Empty")
                                         horizontalAlignment: Text.AlignHCenter

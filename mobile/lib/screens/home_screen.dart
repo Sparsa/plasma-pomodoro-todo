@@ -745,10 +745,15 @@ class _QuadrantCard extends StatelessWidget {
                         state.workspaces[wsIndex].tasks;
                     final idx = allTasks
                         .indexWhere((t) => t.uid == task.uid);
+                    final isActive = !task.done &&
+                        task.uid == state.activeTaskId;
                     return ListTile(
                       dense: true,
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 0),
+                      selected: isActive,
+                      selectedTileColor: const Color(0xFFe74c3c)
+                          .withValues(alpha: 0.10),
                       leading: SizedBox(
                         width: 24,
                         child: Checkbox(
@@ -773,6 +778,12 @@ class _QuadrantCard extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
+                      onTap: task.done
+                          ? null
+                          : () => state.setActiveTask(
+                              task.uid == state.activeTaskId
+                                  ? ''
+                                  : task.uid),
                     );
                   },
                 ),
